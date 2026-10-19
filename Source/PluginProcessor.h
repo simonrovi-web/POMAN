@@ -69,7 +69,7 @@ private:
     void processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
     enum class Param
     {
-        input, output, gateOn, gateThreshold, octOn, octSub, octUp, octDry, odOn, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, dlyOn, dlyTime, dlyFeedback, dlyMix, revOn, revSize, revMix,
+        input, output, gateOn, gateThreshold, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, dlyOn, dlyTime, dlyFeedback, dlyMix, revOn, revSize, revMix,
         count
     };
 

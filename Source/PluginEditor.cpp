@@ -24,6 +24,15 @@ PomanLookAndFeel::PomanLookAndFeel()
     setColour (juce::Label::textColourId, palette::dimText);
     setColour (juce::TextButton::textColourOffId, palette::dimText);
     setColour (juce::TextButton::textColourOnId, palette::abyss);
+    setColour (juce::ComboBox::backgroundColourId, palette::trench);
+    setColour (juce::ComboBox::outlineColourId, palette::panelEdge);
+    setColour (juce::ComboBox::textColourId, palette::text);
+    setColour (juce::ComboBox::arrowColourId, palette::dimText);
+    setColour (juce::PopupMenu::backgroundColourId, palette::panel);
+    setColour (juce::PopupMenu::textColourId, palette::text);
+    setColour (juce::PopupMenu::highlightedBackgroundColourId, palette::biolume.withAlpha (0.25f));
+    setColour (juce::PopupMenu::highlightedTextColourId, palette::text);
+    setColour (juce::PopupMenu::headerTextColourId, palette::biolume);
 }
 
 void PomanLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
@@ -119,10 +128,10 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     addSection ("GATE", palette::kelp, "gateOn", { &addKnob ("gateThreshold", "THRESHOLD") });
     addSection ("SUBMERGE // OCTAVE", palette::pressure, "octOn",
                 { &addKnob ("octSub", "SUB"), &addKnob ("octUp", "UP"), &addKnob ("octDry", "DRY") });
-    addSection ("RIPTIDE // DRIVE", palette::ember, "odOn",
+    driveSection = &addSection ("DRIVE", palette::ember, "odOn",
                 { &addKnob ("odDrive", "DRIVE"), &addKnob ("odTone", "TONE"), &addKnob ("odLevel", "LEVEL") });
 
-    ampSection = &addSection ("POMAN AMPLIFIER", palette::biolume, {},
+    ampSection = &addSection ("AMPLIFIER", palette::biolume, {},
                               { &addKnob ("ampGain", "GAIN", true), &addKnob ("ampBass", "BASS"), &addKnob ("ampMid", "MID"),
                                 &addKnob ("ampTreble", "TREBLE"), &addKnob ("ampPresence", "PRESENCE"),
                                 &addKnob ("ampDepth", "DEPTH"), &addKnob ("ampMaster", "MASTER", true) });
@@ -133,21 +142,16 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     addSection ("TRENCH // REVERB", palette::pressure, "revOn",
                 { &addKnob ("revSize", "SIZE"), &addKnob ("revMix", "MIX") });
 
-    const juce::StringArray channelNames { "CLEAN", "RHYTHM", "LEAD" };
-    for (int i = 0; i < 3; ++i)
-    {
-        auto& b = channelButtons[(size_t) i];
-        b.setButtonText (channelNames[i]);
-        b.setClickingTogglesState (false);
-        b.setColour (juce::TextButton::buttonOnColourId, palette::biolume);
-        b.onClick = [this, i] { channelAttachment->setValueAsCompleteGesture ((float) i); };
-        addAndMakeVisible (b);
-    }
+    // Item ids must follow the choice order: ComboBoxAttachment maps id - 1 to the parameter index.
+    ampModelBox.addItemList (poman::AmpModel::modelNames(), 1);
+    ampModelBox.setColour (juce::ComboBox::outlineColourId, palette::biolume.withAlpha (0.6f));
+    ampModelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, "ampChannel", ampModelBox);
+    addAndMakeVisible (ampModelBox);
 
-    channelAttachment = std::make_unique<juce::ParameterAttachment> (
-        *processor.apvts.getParameter ("ampChannel"),
-        [this] (float value) { refreshChannelButtons ((int) std::round (value)); });
-    channelAttachment->sendInitialUpdate();
+    driveTypeBox.addItemList (poman::Overdrive::typeNames(), 1);
+    driveTypeBox.setColour (juce::ComboBox::outlineColourId, palette::ember.withAlpha (0.6f));
+    driveTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, "odType", driveTypeBox);
+    addAndMakeVisible (driveTypeBox);
 
     for (auto* b : { &loadIrButton, &clearIrButton })
     {
@@ -422,12 +426,6 @@ PomanEditor::Section& PomanEditor::addSection (const juce::String& title, juce::
     return *sections.back();
 }
 
-void PomanEditor::refreshChannelButtons (int channel)
-{
-    for (int i = 0; i < 3; ++i)
-        channelButtons[(size_t) i].setToggleState (i == channel, juce::dontSendNotification);
-}
-
 void PomanEditor::refreshImpulseResponseLabel()
 {
     const auto name = processor.getImpulseResponseName();
@@ -558,11 +556,10 @@ void PomanEditor::resized()
             s->power->setBounds (titleBar.removeFromLeft (sc (20)).withSizeKeepingCentre (sc (16), sc (16)).translated (0, sc (1)));
 
         if (s.get() == ampSection)
-        {
-            auto buttons = titleBar.removeFromRight (sc (300));
-            for (auto& b : channelButtons)
-                b.setBounds (buttons.removeFromLeft (sc (100)).reduced (sc (3), 0));
-        }
+            ampModelBox.setBounds (titleBar.removeFromRight (sc (240)).reduced (sc (2), sc (1)));
+
+        if (s.get() == driveSection)
+            driveTypeBox.setBounds (titleBar.removeFromRight (sc (150)).reduced (sc (2), sc (1)));
 
         if (s.get() == cabSection)
         {

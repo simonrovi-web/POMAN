@@ -13,7 +13,7 @@ struct FactoryPreset
     std::vector<std::pair<const char*, float>> values; // anything not listed uses its default
 };
 
-// Channel: 0 Clean, 1 Rhythm, 2 Lead. Amp knobs 0..10.
+// ampChannel = AmpModel::modelNames() index, odType = Overdrive::typeNames() index. Amp knobs 0..10.
 const std::vector<FactoryPreset>& factoryPresets()
 {
     static const std::vector<FactoryPreset> presets {
@@ -46,6 +46,40 @@ const std::vector<FactoryPreset>& factoryPresets()
             { "odOn", 1 }, { "odDrive", 0.25f }, { "odLevel", 3.0f }, { "gateThreshold", -64.0f },
             { "dlyOn", 1 }, { "dlyTime", 450.0f }, { "dlyFeedback", 0.35f }, { "dlyMix", 0.25f },
             { "revOn", 1 }, { "revSize", 0.6f }, { "revMix", 0.2f } } },
+        { "US Sparkle",
+          { { "ampChannel", 3 }, { "ampGain", 4.5f }, { "ampBass", 5.5f }, { "ampMid", 5.0f }, { "ampTreble", 6.5f },
+            { "ampPresence", 6.0f }, { "ampMaster", 5.0f }, { "odOn", 0 }, { "gateThreshold", -72.0f },
+            { "revOn", 1 }, { "revSize", 0.45f }, { "revMix", 0.22f } } },
+        { "Chime Jangle",
+          { { "ampChannel", 4 }, { "ampGain", 5.5f }, { "ampBass", 4.5f }, { "ampMid", 5.5f }, { "ampTreble", 6.0f },
+            { "ampPresence", 5.0f }, { "ampMaster", 6.0f }, { "odOn", 1 }, { "odType", 4 }, { "odDrive", 0.35f },
+            { "odTone", 0.5f }, { "odLevel", 0.0f }, { "gateThreshold", -70.0f }, { "revOn", 1 }, { "revMix", 0.15f } } },
+        { "Brit Stack",
+          { { "ampChannel", 5 }, { "ampGain", 7.0f }, { "ampBass", 5.0f }, { "ampMid", 6.5f }, { "ampTreble", 6.5f },
+            { "ampPresence", 6.0f }, { "ampMaster", 6.5f }, { "odOn", 1 }, { "odType", 1 }, { "odDrive", 0.3f },
+            { "odTone", 0.55f }, { "odLevel", 2.0f }, { "gateThreshold", -64.0f } } },
+        { "Hot Rod Solo",
+          { { "ampChannel", 6 }, { "ampGain", 6.5f }, { "ampBass", 5.0f }, { "ampMid", 6.0f }, { "ampTreble", 6.0f },
+            { "ampPresence", 5.5f }, { "ampMaster", 6.0f }, { "odOn", 1 }, { "odType", 0 }, { "odDrive", 0.1f },
+            { "odTone", 0.55f }, { "odLevel", 6.0f }, { "gateThreshold", -62.0f },
+            { "dlyOn", 1 }, { "dlyTime", 380.0f }, { "dlyFeedback", 0.3f }, { "dlyMix", 0.2f } } },
+        { "Rect Wall",
+          { { "ampChannel", 7 }, { "ampGain", 6.5f }, { "ampBass", 5.5f }, { "ampMid", 4.5f }, { "ampTreble", 6.0f },
+            { "ampPresence", 6.0f }, { "ampDepth", 6.0f }, { "ampMaster", 5.0f }, { "odOn", 1 }, { "odType", 0 },
+            { "odDrive", 0.0f }, { "odTone", 0.6f }, { "odLevel", 7.0f }, { "gateThreshold", -56.0f } } },
+        { "Djent Machine",
+          { { "ampChannel", 8 }, { "ampGain", 6.0f }, { "ampBass", 5.0f }, { "ampMid", 5.5f }, { "ampTreble", 6.0f },
+            { "ampPresence", 6.5f }, { "ampDepth", 6.5f }, { "ampMaster", 5.0f }, { "odOn", 1 }, { "odType", 0 },
+            { "odDrive", 0.0f }, { "odTone", 0.7f }, { "odLevel", 9.0f }, { "gateThreshold", -52.0f }, { "cabMic", 0.65f } } },
+        { "Fuzz Lead",
+          { { "ampChannel", 0 }, { "ampGain", 6.0f }, { "ampBass", 5.5f }, { "ampMid", 6.0f }, { "ampTreble", 5.0f },
+            { "ampMaster", 6.0f }, { "odOn", 1 }, { "odType", 3 }, { "odDrive", 0.7f }, { "odTone", 0.55f },
+            { "odLevel", -2.0f }, { "gateThreshold", -60.0f }, { "dlyOn", 1 }, { "dlyTime", 420.0f },
+            { "dlyFeedback", 0.3f }, { "dlyMix", 0.2f }, { "revOn", 1 }, { "revMix", 0.18f } } },
+        { "Grunge Dist",
+          { { "ampChannel", 5 }, { "ampGain", 4.0f }, { "ampBass", 6.0f }, { "ampMid", 5.0f }, { "ampTreble", 5.5f },
+            { "ampMaster", 6.0f }, { "odOn", 1 }, { "odType", 2 }, { "odDrive", 0.6f }, { "odTone", 0.45f },
+            { "odLevel", 0.0f }, { "gateThreshold", -60.0f } } },
         { "Ambient Swell",
           { { "ampChannel", 0 }, { "ampGain", 3.0f }, { "ampTreble", 5.5f }, { "ampMaster", 4.0f }, { "odOn", 0 },
             { "octOn", 1 }, { "octSub", 0.0f }, { "octUp", 0.35f }, { "octDry", 1.0f },

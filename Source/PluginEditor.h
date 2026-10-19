@@ -70,7 +70,6 @@ private:
     Section& addSection (const juce::String& title, juce::Colour accent, const juce::String& powerParamId,
                          std::initializer_list<Knob*> knobs);
     void layoutKnobs (Section&, juce::Rectangle<int> area);
-    void refreshChannelButtons (int channel);
     void refreshImpulseResponseLabel();
     void refreshPresetBox();
     void showSavePresetDialog();
@@ -84,12 +83,13 @@ private:
     std::vector<std::unique_ptr<Section>> sections;
     Section* ampSection = nullptr;
     Section* cabSection = nullptr;
+    Section* driveSection = nullptr;
 
     Knob* inputKnob = nullptr;
     Knob* outputKnob = nullptr;
 
-    std::array<juce::TextButton, 3> channelButtons;
-    std::unique_ptr<juce::ParameterAttachment> channelAttachment;
+    juce::ComboBox ampModelBox, driveTypeBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> ampModelAttachment, driveTypeAttachment;
 
     juce::TextButton loadIrButton { "LOAD IR" }, clearIrButton { "BUILT-IN" };
     juce::Label irLabel;

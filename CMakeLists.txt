@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(POMAN VERSION 0.2.0 LANGUAGES C CXX)
+project(POMAN VERSION 0.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -61,3 +61,9 @@ target_sources(POMANTests PRIVATE Tests/TunerTest.cpp)
 target_include_directories(POMANTests PRIVATE Source)
 target_compile_definitions(POMANTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(POMANTests PRIVATE juce::juce_audio_basics PUBLIC juce::juce_recommended_config_flags)
+
+juce_add_console_app(POMANDspTests PRODUCT_NAME "POMANDspTests")
+target_sources(POMANDspTests PRIVATE Tests/DspTest.cpp)
+target_include_directories(POMANDspTests PRIVATE Source)
+target_compile_definitions(POMANDspTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(POMANDspTests PRIVATE juce::juce_dsp PUBLIC juce::juce_recommended_config_flags)

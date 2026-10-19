@@ -1,8 +1,17 @@
-POMAN - Guitar Amp Suite (version portable 0.2.0)
+POMAN - Guitar Amp Suite (version portable 0.3.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.3.0
+- 9 modelos de amplificador (selector en AMPLIFIER): Glass Clean, Modern
+  Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch, Hot Rod Lead,
+  Hi-Gain Rect y Tight Djent. Cada uno con su propio stack de tonos y sag.
+- 5 tipos de drive (selector en DRIVE): Mid Boost, Blues Drive, Distortion,
+  Fuzz y Treble Boost, con volumen igualado entre ellos.
+- 16 presets de fabrica (nuevos: US Sparkle, Chime Jangle, Brit Stack,
+  Hot Rod Solo, Rect Wall, Djent Machine, Fuzz Lead, Grunge Dist).
 
 Novedades 0.2.0
 - Presets: 8 de fabrica (Clean Glass, Edge Crunch, Modern Rhythm, Drop Tune

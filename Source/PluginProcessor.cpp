@@ -68,12 +68,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout PomanProcessor::createParame
     addFloat (layout, "octDry", "Octave Dry", { 0.0f, 1.0f, 0.001f }, 1.0f);
 
     addSwitch (layout, "odOn", "Drive On", true);
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "odType", 1 }, "Drive Type",
+                                                        poman::Overdrive::typeNames(), 0));
     addFloat (layout, "odDrive", "Drive", { 0.0f, 1.0f, 0.001f }, 0.15f);
     addFloat (layout, "odTone", "Drive Tone", { 0.0f, 1.0f, 0.001f }, 0.55f);
     addFloat (layout, "odLevel", "Drive Level", { -12.0f, 12.0f, 0.1f }, 3.0f, "dB");
 
-    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "ampChannel", 1 }, "Amp Channel",
-                                                        juce::StringArray { "Clean", "Rhythm", "Lead" }, 1));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "ampChannel", 1 }, "Amp Model",
+                                                        poman::AmpModel::modelNames(), 1));
     addKnob (layout, "ampGain", "Amp Gain", 6.0f);
     addKnob (layout, "ampBass", "Bass", 5.5f);
     addKnob (layout, "ampMid", "Mid", 4.0f);
@@ -103,7 +105,7 @@ PomanProcessor::PomanProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PomanState", createParameterLayout())
 {
-    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "octOn", "octSub", "octUp", "octDry", "odOn", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "revOn", "revSize", "revMix" };
+    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "revOn", "revSize", "revMix" };
     static_assert (std::size (ids) == (size_t) Param::count);
 
     for (size_t i = 0; i < rawParameters.size(); ++i)
@@ -153,7 +155,8 @@ void PomanProcessor::updateParameters()
 
     gate.setThreshold (param (Param::gateThreshold));
     octaver.setMix (param (Param::octSub), param (Param::octUp), param (Param::octDry));
-    overdrive.setParams (param (Param::odDrive), param (Param::odTone), param (Param::odLevel));
+    overdrive.setParams ((poman::Overdrive::Type) juce::jlimit (0, (int) poman::Overdrive::Type::count - 1, (int) param (Param::odType)),
+                         param (Param::odDrive), param (Param::odTone), param (Param::odLevel));
 
     poman::AmpParams ampParams;
     ampParams.channel = (int) param (Param::ampChannel);
