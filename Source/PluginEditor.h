@@ -14,6 +14,8 @@ public:
     void drawToggleButton (juce::Graphics&, juce::ToggleButton&, bool highlighted, bool down) override;
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour& background,
                                bool highlighted, bool down) override;
+    void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height, float sliderPos, float minPos,
+                           float maxPos, juce::Slider::SliderStyle, juce::Slider&) override;
 };
 
 // Vertical peak meter with decay and a clip LED that latches for a moment.
@@ -26,6 +28,19 @@ public:
 private:
     float levelDb = -100.0f;
     int clipHoldFrames = 0;
+};
+
+// Frequency response of the graphic EQ, drawn from the same filter design the audio path uses.
+class EqCurve : public juce::Component
+{
+public:
+    void setResponse (const poman::GraphicEQ::Settings& settings, double sampleRate, bool enabled);
+    void paint (juce::Graphics&) override;
+
+private:
+    poman::GraphicEQ::Settings settings;
+    double sampleRate = 48000.0;
+    bool enabled = false;
 };
 
 class TunerDisplay : public juce::Component
@@ -84,11 +99,25 @@ private:
 
     std::vector<std::unique_ptr<Knob>> knobs;
     std::vector<std::unique_ptr<Section>> sections;
+    // Rows are laid out from these named sections, never from creation order.
+    Section* gateSection = nullptr;
+    Section* octaveSection = nullptr;
+    Section* delaySection = nullptr;
+    Section* reverbSection = nullptr;
     Section* ampSection = nullptr;
     Section* cabSection = nullptr;
     Section* driveSection = nullptr;
     Section* harmonizerSection = nullptr;
     Section* modSection = nullptr;
+    Section* eqSection = nullptr;
+
+    std::array<juce::Slider, poman::GraphicEQ::numBands> eqSliders;
+    std::array<juce::Label, poman::GraphicEQ::numBands> eqLabels;
+    std::array<std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>, poman::GraphicEQ::numBands> eqAttachments;
+    EqCurve eqCurve;
+    poman::GraphicEQ::Settings shownEq;
+    bool shownEqEnabled = false;
+    bool eqCurveInitialised = false;
 
     Knob* inputKnob = nullptr;
     Knob* outputKnob = nullptr;

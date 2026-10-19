@@ -60,6 +60,36 @@ void PomanLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
     g.fillPath (pointer, juce::AffineTransform::rotation (angle).translated (centre));
 }
 
+void PomanLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
+                                         float minPos, float maxPos, juce::Slider::SliderStyle style, juce::Slider& slider)
+{
+    if (style != juce::Slider::LinearVertical)
+    {
+        LookAndFeel_V4::drawLinearSlider (g, x, y, width, height, sliderPos, minPos, maxPos, style, slider);
+        return;
+    }
+
+    // EQ fader: thin track, fill from the 0 dB centre to the thumb.
+    const auto accent = slider.findColour (juce::Slider::trackColourId);
+    const float cx = (float) x + (float) width * 0.5f;
+    g.setColour (palette::abyss);
+    g.fillRoundedRectangle (cx - 2.5f, (float) y, 5.0f, (float) height, 2.5f);
+
+    const float zeroY = (float) slider.getPositionOfValue (0.0);
+    g.setColour (accent);
+    g.fillRoundedRectangle (cx - 2.5f, juce::jmin (zeroY, sliderPos), 5.0f, std::abs (zeroY - sliderPos), 2.5f);
+
+    g.setColour (palette::panelEdge.brighter (0.5f));
+    g.fillRect (cx - 7.0f, zeroY, 14.0f, 1.0f);
+
+    const float thumbWidth = juce::jmin (22.0f, (float) width * 0.8f);
+    const auto thumb = juce::Rectangle<float> (thumbWidth, 9.0f).withCentre ({ cx, sliderPos });
+    g.setColour (palette::text);
+    g.fillRoundedRectangle (thumb, 3.0f);
+    g.setColour (palette::abyss);
+    g.fillRect (thumb.withSizeKeepingCentre (thumbWidth - 6.0f, 1.0f));
+}
+
 void PomanLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button, bool highlighted, bool)
 {
     const auto accent = button.findColour (juce::ToggleButton::tickColourId);
@@ -113,11 +143,36 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     for (auto* k : { inputKnob, outputKnob })
         k->slider.setColour (juce::Slider::rotarySliderFillColourId, palette::text);
 
-    addSection ("GATE", palette::kelp, "gateOn", { &addKnob ("gateThreshold", "THRESHOLD") });
-    addSection ("SUBMERGE // OCTAVE", palette::pressure, "octOn",
+    gateSection = &addSection ("GATE", palette::kelp, "gateOn", { &addKnob ("gateThreshold", "THRESHOLD") });
+    octaveSection = &addSection ("SUBMERGE // OCTAVE", palette::pressure, "octOn",
                 { &addKnob ("octSub", "SUB"), &addKnob ("octUp", "UP"), &addKnob ("octDry", "DRY") });
     driveSection = &addSection ("DRIVE", palette::ember, "odOn",
                 { &addKnob ("odDrive", "DRIVE"), &addKnob ("odTone", "TONE"), &addKnob ("odLevel", "LEVEL") });
+
+    eqSection = &addSection ("GRAPHIC EQ", palette::sunlight, "eqOn",
+                             { &addKnob ("eqLowCut", "LOW CUT"), &addKnob ("eqHighCut", "HIGH CUT"), &addKnob ("eqLevel", "LEVEL") });
+    {
+        const char* ids[] { "eq31", "eq63", "eq125", "eq250", "eq500", "eq1k", "eq2k", "eq4k", "eq8k", "eq16k" };
+        const auto labels = poman::GraphicEQ::bandLabels();
+        for (int b = 0; b < poman::GraphicEQ::numBands; ++b)
+        {
+            auto& s = eqSliders[(size_t) b];
+            s.setSliderStyle (juce::Slider::LinearVertical);
+            s.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
+            s.setColour (juce::Slider::trackColourId, palette::sunlight);
+            s.setPopupDisplayEnabled (true, true, this);
+            eqAttachments[(size_t) b] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (processor.apvts, ids[b], s);
+            s.setDoubleClickReturnValue (true, 0.0); // after the attachment, which resets it
+            addAndMakeVisible (s);
+
+            auto& l = eqLabels[(size_t) b];
+            l.setText (labels[b], juce::dontSendNotification);
+            l.setJustificationType (juce::Justification::centred);
+            l.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+            addAndMakeVisible (l);
+        }
+        addAndMakeVisible (eqCurve);
+    }
 
     ampSection = &addSection ("AMPLIFIER", palette::biolume, {},
                               { &addKnob ("ampGain", "GAIN", true), &addKnob ("ampBass", "BASS"), &addKnob ("ampMid", "MID"),
@@ -125,9 +180,9 @@ PomanEditor::PomanEditor (PomanProcessor& p)
                                 &addKnob ("ampDepth", "DEPTH"), &addKnob ("ampMaster", "MASTER", true) });
 
     cabSection = &addSection ("HULL // CABINET", palette::biolume, "cabOn", { &addKnob ("cabMic", "MIC POS") });
-    addSection ("ECHOLOCATION // DELAY", palette::pressure, "dlyOn",
+    delaySection = &addSection ("ECHOLOCATION // DELAY", palette::pressure, "dlyOn",
                 { &addKnob ("dlyTime", "TIME"), &addKnob ("dlyFeedback", "FEEDBACK"), &addKnob ("dlyMix", "MIX") });
-    addSection ("TRENCH // REVERB", palette::pressure, "revOn",
+    reverbSection = &addSection ("TRENCH // REVERB", palette::pressure, "revOn",
                 { &addKnob ("revSize", "SIZE"), &addKnob ("revMix", "MIX") });
 
     harmIntervalKnobs = { &addKnob ("harmV1Steps", "VOICE 1"), &addKnob ("harmV2Steps", "VOICE 2") };
@@ -258,9 +313,9 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     }
 
     setResizable (true, true);
-    setResizeLimits (900, 692, 1600, 1231);
-    getConstrainer()->setFixedAspectRatio (1040.0 / 800.0);
-    setSize (1040, 800);
+    setResizeLimits (760, 687, 1600, 1446);
+    getConstrainer()->setFixedAspectRatio (1040.0 / 940.0);
+    setSize (1040, 940);
     startTimerHz (30);
 }
 
@@ -344,11 +399,88 @@ void PomanEditor::timerCallback()
     refreshHarmonizerInfo();
     refreshModLabels();
 
+    const auto eqSettings = processor.getEqSettings();
+    const bool eqEnabled = processor.isEqEnabled();
+    if (! eqCurveInitialised || eqSettings != shownEq || eqEnabled != shownEqEnabled)
+    {
+        eqCurveInitialised = true;
+        shownEq = eqSettings;
+        shownEqEnabled = eqEnabled;
+        eqCurve.setResponse (eqSettings, processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 48000.0, eqEnabled);
+    }
+
     // Session restores and host preset changes can swap the state underneath the editor.
     if (processor.getPresetManager().getCurrentName() != shownPresetName)
     {
         refreshPresetBox();
         refreshImpulseResponseLabel();
+    }
+}
+
+//==============================================================================
+void EqCurve::setResponse (const poman::GraphicEQ::Settings& s, double sr, bool on)
+{
+    settings = s;
+    sampleRate = sr;
+    enabled = on;
+    repaint();
+}
+
+void EqCurve::paint (juce::Graphics& g)
+{
+    const auto bounds = getLocalBounds().toFloat();
+    g.setColour (palette::abyss);
+    g.fillRoundedRectangle (bounds, 6.0f);
+
+    constexpr float rangeDb = 15.0f;
+    const auto xForHz = [&] (double hz) { return bounds.getX() + bounds.getWidth() * (float) (std::log10 (hz / 20.0) / 3.0); };
+    const auto yForDb = [&] (float db) { return bounds.getCentreY() - bounds.getHeight() * 0.5f * juce::jlimit (-1.0f, 1.0f, db / rangeDb); };
+
+    g.setFont (juce::FontOptions (10.0f));
+    for (double hz : { 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0 })
+    {
+        const float x = xForHz (hz);
+        g.setColour (palette::panelEdge.withAlpha (0.7f));
+        g.fillRect (x, bounds.getY(), 1.0f, bounds.getHeight());
+        g.setColour (palette::dimText.withAlpha (0.8f));
+        g.drawText (hz >= 1000.0 ? juce::String ((int) (hz / 1000.0)) + "k" : juce::String ((int) hz),
+                    juce::Rectangle<float> (x + 2.0f, bounds.getBottom() - 13.0f, 30.0f, 12.0f), juce::Justification::centredLeft);
+    }
+    for (float db : { -12.0f, -6.0f, 6.0f, 12.0f })
+    {
+        g.setColour (palette::panelEdge.withAlpha (0.5f));
+        g.fillRect (bounds.getX(), yForDb (db), bounds.getWidth(), 1.0f);
+    }
+    g.setColour (palette::panelEdge.brighter (0.4f));
+    g.fillRect (bounds.getX(), yForDb (0.0f), bounds.getWidth(), 1.0f);
+
+    const auto design = poman::GraphicEQ::designFilters (settings, sampleRate);
+    juce::Path curve;
+    for (int x = 0; x <= getWidth(); ++x)
+    {
+        const double hz = 20.0 * std::pow (1000.0, (double) x / juce::jmax (1, getWidth()));
+        const float y = yForDb (poman::GraphicEQ::responseDb (design, settings, sampleRate, juce::jmin (hz, sampleRate * 0.49)));
+        if (x == 0)
+            curve.startNewSubPath (bounds.getX(), y);
+        else
+            curve.lineTo (bounds.getX() + (float) x, y);
+    }
+
+    const auto colour = enabled ? palette::sunlight : palette::dimText;
+    juce::Path fill (curve);
+    fill.lineTo (bounds.getRight(), yForDb (0.0f));
+    fill.lineTo (bounds.getX(), yForDb (0.0f));
+    fill.closeSubPath();
+    g.setColour (colour.withAlpha (0.15f));
+    g.fillPath (fill);
+    g.setColour (colour);
+    g.strokePath (curve, juce::PathStrokeType (2.0f));
+
+    if (! enabled)
+    {
+        g.setColour (palette::dimText);
+        g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+        g.drawText ("BYPASSED", bounds.reduced (8.0f, 4.0f), juce::Justification::topRight);
     }
 }
 
@@ -647,10 +779,12 @@ void PomanEditor::resized()
     presetBox.setBounds (presetRow.reduced (sc (2), 0));
 
     const int gap = sc (10);
-    const int rowHeight = (area.getHeight() - 3 * gap) / 4;
+    const int rowHeight = (area.getHeight() - 4 * gap) / 5;
     auto pedals = area.removeFromTop (rowHeight);
     area.removeFromTop (gap);
     auto ampRow = area.removeFromTop (rowHeight);
+    area.removeFromTop (gap);
+    auto eqRow = area.removeFromTop (rowHeight);
     area.removeFromTop (gap);
     auto harmRow = area.removeFromTop (rowHeight);
     area.removeFromTop (gap);
@@ -668,10 +802,11 @@ void PomanEditor::resized()
         }
     };
 
-    placeRow (pedals, { sections[0].get(), sections[1].get(), sections[2].get() }, { 1, 3, 3 });
+    placeRow (pedals, { gateSection, octaveSection, driveSection }, { 1, 3, 3 });
     placeRow (ampRow, { ampSection }, { 1 });
+    placeRow (eqRow, { eqSection }, { 1 });
     placeRow (harmRow, { harmonizerSection, modSection }, { 3, 2 });
-    placeRow (fxRow, { cabSection, sections[5].get(), sections[6].get() }, { 3, 3, 2 });
+    placeRow (fxRow, { cabSection, delaySection, reverbSection }, { 3, 3, 2 });
 
     for (auto& s : sections)
     {
@@ -685,6 +820,20 @@ void PomanEditor::resized()
 
         if (s.get() == driveSection)
             driveTypeBox.setBounds (titleBar.removeFromRight (sc (150)).reduced (sc (2), sc (1)));
+
+        if (s.get() == eqSection)
+        {
+            auto sliders = inner.removeFromLeft (sc (480));
+            const int column = sliders.getWidth() / poman::GraphicEQ::numBands;
+            for (int b = 0; b < poman::GraphicEQ::numBands; ++b)
+            {
+                auto cell = sliders.removeFromLeft (column);
+                eqLabels[(size_t) b].setBounds (cell.removeFromBottom (sc (16)));
+                eqSliders[(size_t) b].setBounds (cell.reduced (sc (4), sc (2)));
+            }
+            inner.removeFromLeft (sc (12));
+            eqCurve.setBounds (inner.removeFromLeft (inner.getWidth() - sc (260)).reduced (0, sc (2)));
+        }
 
         if (s.get() == modSection)
             modTypeBox.setBounds (titleBar.removeFromRight (sc (120)).reduced (sc (2), sc (1)));

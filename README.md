@@ -7,7 +7,7 @@ Su concepto es el de un "rig completo" en un solo plugin, con DSP, nombre e inte
 
 ```
 Input → [Afinador] → Gate → Submerge (octavador) → Drive (5 tipos) → POMAN Amplifier (4x oversampling)
-      → Hull (cabina: modelo 4x12 o IR) → Harmonizer → Mod (chorus/flanger/tremolo) → Echolocation (delay ping-pong) → Trench (reverb) → Output
+      → Hull (cabina: modelo 4x12 o IR) → Graphic EQ → Harmonizer → Mod (chorus/flanger/tremolo) → Echolocation (delay ping-pong) → Trench (reverb) → Output
 ```
 
 - **Gate**: puerta con histéresis y hold, pensada para palm mutes cerrados.
@@ -33,12 +33,15 @@ del plugin) y exportación de la mezcla. Las tomas se escriben en disco desde un
 (`ThreadedWriter`) como WAV de 24 bits en `Recordings/Session <fecha>/`; el hilo de audio no se bloquea nunca.
 En el VST3 la página no aparece: ahí graba el DAW.
 
+- **Graphic EQ**: 10 bandas de octava (31 Hz-16 kHz, ±12 dB, picos Q 1,41), low cut y high cut de 12 dB/oct
+  y nivel. `GraphicEQ::designFilters()` es la única fuente de los filtros: la usan el audio y la curva de la
+  interfaz, y una prueba verifica que la curva coincide con la respuesta medida (error < 0,2 dB).
 - **Mod**: chorus (7-21 ms, seno, estéreo en cuadratura), flanger (0,3-4,3 ms, triángulo, realimentación
   limitada con tanh para que sea estable) y tremolo (forma seno-cuadrada y desfase estéreo hasta auto-pan).
 
 ## Extras
 
-- **Presets**: 23 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
+- **Presets**: 24 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
 - **Afinador** YIN (31 Hz a 1,3 kHz) que silencia la salida mientras está abierto.
 - **Medidores** de entrada y salida con indicador de saturación.
 - **Audio**: ASIO y WASAPI de baja latencia; en el primer arranque elige la interfaz ASIO de hardware con el buffer más pequeño estable.

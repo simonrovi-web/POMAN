@@ -6,6 +6,7 @@
 #include "dsp/Ambience.h"
 #include "dsp/AmpModel.h"
 #include "dsp/CabSim.h"
+#include "dsp/GraphicEQ.h"
 #include "dsp/Harmonizer.h"
 #include "dsp/Modulation.h"
 #include "dsp/NoiseGate.h"
@@ -57,6 +58,10 @@ public:
     poman::PresetManager& getPresetManager() { return *presetManager; }
     poman::MultitrackRecorder& getRecorder() { return *recorder; }
 
+    // Single reader of the EQ parameters, used by the audio path and the editor's response curve.
+    poman::GraphicEQ::Settings getEqSettings() const;
+    bool isEqEnabled() const { return enabled (Param::eqOn); }
+
     // Peak levels since the last call (UI thread), for the meters.
     float takeInputPeak() { return inputPeak.exchange (0.0f); }
     float takeOutputPeak() { return outputPeak.exchange (0.0f); }
@@ -77,7 +82,7 @@ private:
     void processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
     enum class Param
     {
-        input, output, gateOn, gateThreshold, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, modOn, modType, modRate, modDepth, modMix, modFeedback, dlyOn, dlyTime, dlyFeedback, dlyMix, revOn, revSize, revMix,
+        input, output, gateOn, gateThreshold, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, eqOn, eq31, eq63, eq125, eq250, eq500, eq1k, eq2k, eq4k, eq8k, eq16k, eqLowCut, eqHighCut, eqLevel, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, modOn, modType, modRate, modDepth, modMix, modFeedback, dlyOn, dlyTime, dlyFeedback, dlyMix, revOn, revSize, revMix,
         count
     };
 
@@ -91,6 +96,7 @@ private:
     poman::Overdrive overdrive;
     poman::AmpModel amp;
     poman::CabSim cab;
+    poman::GraphicEQ graphicEq;
     poman::Harmonizer harmonizer;
     poman::Modulation modulation;
     poman::PingPongDelay delay;

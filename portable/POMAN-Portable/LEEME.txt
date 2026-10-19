@@ -1,8 +1,18 @@
-POMAN - Guitar Amp Suite (version portable 0.7.0)
+POMAN - Guitar Amp Suite (version portable 0.8.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.8.0
+- GRAPHIC EQ (fila amarilla, activalo con su LED): 10 bandas por octava
+  (31 Hz a 16 kHz), +/-12 dB cada una. Doble clic en una banda = 0 dB.
+  * LOW CUT quita graves (20-400 Hz), HIGH CUT quita agudos (2-20 kHz).
+  * LEVEL compensa el volumen si subes muchas bandas.
+  * La curva muestra en vivo exactamente lo que suena.
+  * Va despues de la cabina (ecualiza el sonido final del amplificador).
+- Preset nuevo: Studio Rhythm EQ (graves y agudos limpios, medios ajustados).
+- La ventana es algo mas alta (1040x940) y ahora puede hacerse mas pequena.
 
 Novedades 0.7.0
 - Pedal MOD (seccion rosa, junto al harmonizer) con 3 efectos:

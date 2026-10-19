@@ -2,6 +2,7 @@
 // and prints RMS so the models can be level-matched.
 #include "dsp/AmpModel.h"
 #include "dsp/Overdrive.h"
+#include "dsp/GraphicEQ.h"
 #include "dsp/Harmonizer.h"
 #include "dsp/Modulation.h"
 #include <algorithm>
@@ -164,6 +165,79 @@ int main()
         const bool ok = std::abs (cents) < 5.0f;
         failures += ok ? 0 : 1;
         std::printf ("%s  %-24s out %7.2f Hz  expected %7.2f Hz  (%+.1f cents)\n", ok ? "PASS" : "FAIL", c.label, outHz, c.expectedHz, cents);
+    }
+
+    std::printf ("-- Graphic EQ --\n");
+    {
+        const auto measureGainDb = [&] (const poman::GraphicEQ::Settings& s, double hz)
+        {
+            poman::GraphicEQ eq;
+            eq.prepare (sampleRate);
+            eq.setSettings (s);
+            const int total = (int) sampleRate;
+            std::vector<float> x ((size_t) total);
+            for (int i = 0; i < total; ++i)
+                x[(size_t) i] = 0.25f * (float) std::sin (juce::MathConstants<double>::twoPi * hz * i / sampleRate);
+            std::vector<float> y = x;
+            for (int start = 0; start < total; start += blockSize)
+                eq.process (y.data() + start, juce::jmin (blockSize, total - start));
+            double sx = 0.0, sy = 0.0;
+            for (int i = total / 4; i < total; ++i)
+                sx += (double) x[(size_t) i] * x[(size_t) i], sy += (double) y[(size_t) i] * y[(size_t) i];
+            return (float) (10.0 * std::log10 (sy / sx));
+        };
+
+        // Flat: nothing changes.
+        {
+            poman::GraphicEQ eq;
+            eq.prepare (sampleRate);
+            eq.setSettings ({});
+            juce::Random rng (3);
+            std::vector<float> x (48000), y;
+            for (auto& v : x)
+                v = rng.nextFloat() * 2.0f - 1.0f;
+            y = x;
+            eq.process (y.data(), (int) y.size());
+            float maxDiff = 0.0f;
+            for (size_t i = 0; i < x.size(); ++i)
+                maxDiff = std::max (maxDiff, std::abs (x[i] - y[i]));
+            const bool ok = maxDiff < 1.0e-6f;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s max difference %.2e\n", ok ? "PASS" : "FAIL", "flat EQ is transparent", maxDiff);
+        }
+
+        poman::GraphicEQ::Settings boost;
+        boost.gainsDb[5] = 12.0f; // 1 kHz
+        const float boostDb = measureGainDb (boost, 1000.0);
+        const bool boostOk = std::abs (boostDb - 12.0f) < 0.3f;
+        failures += boostOk ? 0 : 1;
+        std::printf ("%s  %-24s %+5.2f dB at 1 kHz\n", boostOk ? "PASS" : "FAIL", "+12 dB on 1k band", boostDb);
+
+        // Mixed settings: the drawn curve must match the measured response.
+        poman::GraphicEQ::Settings mixed;
+        mixed.gainsDb = { 3.0f, -4.0f, 6.0f, -2.0f, -6.0f, 4.0f, 2.0f, -3.0f, 5.0f, -8.0f };
+        mixed.lowCutHz = 80.0f;
+        mixed.highCutHz = 9000.0f;
+        mixed.levelDb = -3.0f;
+        const auto design = poman::GraphicEQ::designFilters (mixed, sampleRate);
+        float worst = 0.0f;
+        for (double hz : { 40.0, 100.0, 300.0, 700.0, 1500.0, 3000.0, 6000.0, 12000.0 })
+        {
+            const float measured = measureGainDb (mixed, hz);
+            const float drawn = poman::GraphicEQ::responseDb (design, mixed, sampleRate, hz);
+            worst = std::max (worst, std::abs (measured - drawn));
+        }
+        const bool curveOk = worst < 0.2f;
+        failures += curveOk ? 0 : 1;
+        std::printf ("%s  %-24s worst mismatch %.3f dB over 8 frequencies\n", curveOk ? "PASS" : "FAIL", "curve == measured", worst);
+
+        poman::GraphicEQ::Settings cuts;
+        cuts.lowCutHz = 200.0f;
+        cuts.highCutHz = 2000.0f;
+        const float low = measureGainDb (cuts, 50.0), high = measureGainDb (cuts, 8000.0), mid = measureGainDb (cuts, 630.0);
+        const bool cutsOk = low < -20.0f && high < -20.0f && std::abs (mid) < 1.0f;
+        failures += cutsOk ? 0 : 1;
+        std::printf ("%s  %-24s 50 Hz %+.1f dB, 630 Hz %+.1f dB, 8 kHz %+.1f dB\n", cutsOk ? "PASS" : "FAIL", "low/high cut", low, mid, high);
     }
 
     std::printf ("-- Modulation --\n");

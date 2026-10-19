@@ -27,7 +27,9 @@ void addFloat (Layout& layout, const char* id, const char* name, NormalisableRan
         if (label == "dB")
             return juce::String (value, 1) + " dB";
         if (label == "Hz")
-            return juce::String (value, 2) + " Hz";
+            return value >= 1000.0f ? juce::String (value / 1000.0f, 1) + " kHz"
+                 : value >= 20.0f   ? juce::String (juce::roundToInt (value)) + " Hz"
+                                    : juce::String (value, 2) + " Hz";
         return juce::String (value, 1);
     };
     auto fromText = [normalised] (const juce::String& text)
@@ -89,6 +91,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout PomanProcessor::createParame
     addSwitch (layout, "cabOn", "Cab On", true);
     addFloat (layout, "cabMic", "Mic Position", { 0.0f, 1.0f, 0.001f }, 0.5f);
 
+    addSwitch (layout, "eqOn", "EQ On", false);
+    {
+        const auto labels = poman::GraphicEQ::bandLabels();
+        const char* ids[] { "eq31", "eq63", "eq125", "eq250", "eq500", "eq1k", "eq2k", "eq4k", "eq8k", "eq16k" };
+        for (int b = 0; b < poman::GraphicEQ::numBands; ++b)
+            addFloat (layout, ids[b], ("EQ " + labels[b]).toRawUTF8(), { -12.0f, 12.0f, 0.1f }, 0.0f, "dB");
+    }
+    addFloat (layout, "eqLowCut", "EQ Low Cut", { 20.0f, 400.0f, 1.0f, 0.4f }, 20.0f, "Hz");
+    addFloat (layout, "eqHighCut", "EQ High Cut", { 2000.0f, 20000.0f, 10.0f, 0.4f }, 20000.0f, "Hz");
+    addFloat (layout, "eqLevel", "EQ Level", { -12.0f, 12.0f, 0.1f }, 0.0f, "dB");
+
     addSwitch (layout, "harmOn", "Harmonizer On", false);
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "harmMode", 1 }, "Harmonizer Mode", poman::Harmonizer::modeNames(), 1));
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "harmKey", 1 }, "Harmonizer Key", poman::Harmonizer::keyNames(), 4));
@@ -126,7 +139,7 @@ PomanProcessor::PomanProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PomanState", createParameterLayout())
 {
-    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "modOn", "modType", "modRate", "modDepth", "modMix", "modFeedback", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "revOn", "revSize", "revMix" };
+    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "eqOn", "eq31", "eq63", "eq125", "eq250", "eq500", "eq1k", "eq2k", "eq4k", "eq8k", "eq16k", "eqLowCut", "eqHighCut", "eqLevel", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "modOn", "modType", "modRate", "modDepth", "modMix", "modFeedback", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "revOn", "revSize", "revMix" };
     static_assert (std::size (ids) == (size_t) Param::count);
 
     for (size_t i = 0; i < rawParameters.size(); ++i)
@@ -164,6 +177,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     cab.prepare (sampleRate, maxChunkSize);
     delay.prepare (sampleRate, maxChunkSize);
     reverb.prepare (sampleRate, maxChunkSize);
+    graphicEq.prepare (sampleRate);
     harmonizer.prepare (sampleRate);
     modulation.prepare (sampleRate, maxChunkSize);
     recorder->prepare (sampleRate);
@@ -200,6 +214,7 @@ void PomanProcessor::updateParameters()
     amp.setParams (ampParams);
 
     cab.setMic (param (Param::cabMic));
+    graphicEq.setSettings (getEqSettings());
 
     poman::Harmonizer::Params harmParams;
     harmParams.mode = param (Param::harmMode) > 0.5f ? poman::Harmonizer::Mode::diatonic : poman::Harmonizer::Mode::chromatic;
@@ -214,6 +229,18 @@ void PomanProcessor::updateParameters()
                           param (Param::modRate), param (Param::modDepth), param (Param::modMix), param (Param::modFeedback));
     delay.setParams (param (Param::dlyTime), param (Param::dlyFeedback), param (Param::dlyMix));
     reverb.setParams (param (Param::revSize), param (Param::revMix));
+}
+
+poman::GraphicEQ::Settings PomanProcessor::getEqSettings() const
+{
+    constexpr Param bands[] { Param::eq31, Param::eq63, Param::eq125, Param::eq250, Param::eq500, Param::eq1k, Param::eq2k, Param::eq4k, Param::eq8k, Param::eq16k };
+    poman::GraphicEQ::Settings s;
+    for (int b = 0; b < poman::GraphicEQ::numBands; ++b)
+        s.gainsDb[(size_t) b] = param (bands[b]);
+    s.lowCutHz = param (Param::eqLowCut);
+    s.highCutHz = param (Param::eqHighCut);
+    s.levelDb = param (Param::eqLevel);
+    return s;
 }
 
 void PomanProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
@@ -276,6 +303,9 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
 
     if (enabled (Param::cabOn))
         cab.process (monoBlock);
+
+    if (enabled (Param::eqOn))
+        graphicEq.process (mono, numSamples);
 
     auto* left = buffer.getWritePointer (0, startSample);
     auto* right = buffer.getWritePointer (1, startSample);

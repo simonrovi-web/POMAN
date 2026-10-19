@@ -17,4 +17,5 @@ inline const juce::Colour ember { 0xffff7a45 };
 inline const juce::Colour kelp { 0xffa3e05a };
 inline const juce::Colour aurora { 0xffb98cff };
 inline const juce::Colour coral { 0xffff6fa8 };
+inline const juce::Colour sunlight { 0xffffc94a };
 } // namespace palette
