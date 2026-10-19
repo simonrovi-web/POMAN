@@ -7,7 +7,7 @@ Su concepto es el de un "rig completo" en un solo plugin, con DSP, nombre e inte
 
 ```
 Input → [Afinador] → Gate → Submerge (octavador) → Drive (5 tipos) → POMAN Amplifier (4x oversampling)
-      → Hull (cabina: modelo 4x12 o IR) → Echolocation (delay ping-pong) → Trench (reverb) → Output
+      → Hull (cabina: modelo 4x12 o IR) → Harmonizer → Echolocation (delay ping-pong) → Trench (reverb) → Output
 ```
 
 - **Gate**: puerta con histéresis y hold, pensada para palm mutes cerrados.
@@ -19,9 +19,14 @@ Input → [Afinador] → Gate → Submerge (octavador) → Drive (5 tipos) → P
   stack de tonos propio (frecuencias y voz de medios), sag y presencia. Las etapas no lineales van a 4x oversampling.
 - **Hull**: modelo de cabina por filtros, con un control de posición del micrófono, o carga de un IR propio en `.wav`/`.aif`.
 
+- **Harmonizer**: 2 voces panoramizadas. En modo *Diatonic* sigue el tono de la señal DI limpia (YIN)
+  y calcula cada intervalo por grados de la escala elegida (8 escalas, 12 tonalidades); en *Chromatic* usa
+  semitonos fijos. Transpone la señal ya procesada (post-cabina) con un pitch shifter de doble lectura cuya
+  ventana es un múltiplo exacto del periodo de entrada, para que la armonía no se desafine.
+
 ## Extras
 
-- **Presets**: 16 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
+- **Presets**: 18 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
 - **Afinador** YIN (31 Hz a 1,3 kHz) que silencia la salida mientras está abierto.
 - **Medidores** de entrada y salida con indicador de saturación.
 - **Audio**: ASIO y WASAPI de baja latencia; en el primer arranque elige la interfaz ASIO de hardware con el buffer más pequeño estable.
@@ -43,7 +48,7 @@ Se genera:
 ```bash
 cmake --build build --config Release --target POMANTests POMANDspTests
 build/POMANTests_artefacts/Release/POMANTests.exe        # precisión del afinador
-build/POMANDspTests_artefacts/Release/POMANDspTests.exe  # render de cada amp y drive, niveles
+build/POMANDspTests_artefacts/Release/POMANDspTests.exe  # render de amps/drives, intervalos y afinación del harmonizer
 ```
 
 ## Estructura

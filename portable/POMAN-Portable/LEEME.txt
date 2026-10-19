@@ -1,8 +1,19 @@
-POMAN - Guitar Amp Suite (version portable 0.3.0)
+POMAN - Guitar Amp Suite (version portable 0.4.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.4.0
+- HARMONIZER de 2 voces (activalo con su LED):
+  * Diatonic: elige tonalidad (Key) y escala; las voces se mueven por grados
+    de la escala (+3rd, +5th...) y cambian solas entre mayor/menor segun la
+    nota que toques, como un harmonizer inteligente.
+  * Chromatic: intervalos fijos en semitonos (ej. +12 / -12 = octavas).
+  * El recuadro muestra en vivo la nota que tocas y las notas de cada voz.
+  * Voz 1 a la izquierda y voz 2 a la derecha (estereo).
+- Presets nuevos: Twin Harmony Lead (terceras en Mi menor) y Octave Shimmer.
+- Toca notas sueltas: con acordes el harmonizer no puede seguir el tono.
 
 Novedades 0.3.0
 - 9 modelos de amplificador (selector en AMPLIFIER): Glass Clean, Modern

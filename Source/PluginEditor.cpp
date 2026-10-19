@@ -14,6 +14,7 @@ const juce::Colour biolume { 0xff2fe0c8 };
 const juce::Colour pressure { 0xff4c8dff };
 const juce::Colour ember { 0xffff7a45 };
 const juce::Colour kelp { 0xffa3e05a };
+const juce::Colour aurora { 0xffb98cff };
 } // namespace palette
 
 //==============================================================================
@@ -142,6 +143,37 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     addSection ("TRENCH // REVERB", palette::pressure, "revOn",
                 { &addKnob ("revSize", "SIZE"), &addKnob ("revMix", "MIX") });
 
+    harmIntervalKnobs = { &addKnob ("harmV1Steps", "VOICE 1"), &addKnob ("harmV2Steps", "VOICE 2") };
+    harmonizerSection = &addSection ("HARMONIZER", palette::aurora, "harmOn",
+                                     { harmIntervalKnobs[0], &addKnob ("harmV1Level", "V1 LEVEL"),
+                                       harmIntervalKnobs[1], &addKnob ("harmV2Level", "V2 LEVEL"), &addKnob ("harmDry", "DRY") });
+
+    // Interval knobs read as musical intervals; their meaning follows the mode (degrees vs semitones).
+    for (auto* k : harmIntervalKnobs)
+    {
+        k->slider.textFromValueFunction = [this] (double v) { return intervalName (juce::roundToInt (v)); };
+        k->slider.updateText();
+    }
+
+    const auto setupBox = [this] (juce::ComboBox& box, const juce::StringArray& items, const char* paramId,
+                                  std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>& attachment)
+    {
+        box.addItemList (items, 1);
+        box.setColour (juce::ComboBox::outlineColourId, palette::aurora.withAlpha (0.6f));
+        attachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, paramId, box);
+        addAndMakeVisible (box);
+    };
+    setupBox (harmModeBox, poman::Harmonizer::modeNames(), "harmMode", harmModeAttachment);
+    setupBox (harmKeyBox, poman::Harmonizer::keyNames(), "harmKey", harmKeyAttachment);
+    setupBox (harmScaleBox, poman::Harmonizer::scaleNames(), "harmScale", harmScaleAttachment);
+
+    harmInfoLabel.setJustificationType (juce::Justification::centred);
+    harmInfoLabel.setFont (juce::FontOptions (15.0f, juce::Font::bold));
+    harmInfoLabel.setColour (juce::Label::textColourId, palette::text);
+    harmInfoLabel.setColour (juce::Label::backgroundColourId, palette::abyss.withAlpha (0.6f));
+    harmInfoLabel.setColour (juce::Label::outlineColourId, palette::panelEdge);
+    addAndMakeVisible (harmInfoLabel);
+
     // Item ids must follow the choice order: ComboBoxAttachment maps id - 1 to the parameter index.
     ampModelBox.addItemList (poman::AmpModel::modelNames(), 1);
     ampModelBox.setColour (juce::ComboBox::outlineColourId, palette::biolume.withAlpha (0.6f));
@@ -214,9 +246,9 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     addAndMakeVisible (outputMeter);
 
     setResizable (true, true);
-    setResizeLimits (900, 560, 1600, 1000);
-    getConstrainer()->setFixedAspectRatio (1040.0 / 640.0);
-    setSize (1040, 640);
+    setResizeLimits (900, 692, 1600, 1231);
+    getConstrainer()->setFixedAspectRatio (1040.0 / 800.0);
+    setSize (1040, 800);
     startTimerHz (30);
 }
 
@@ -284,6 +316,8 @@ void PomanEditor::timerCallback()
 
     if (tunerDisplay.isVisible())
         tunerDisplay.setReading (processor.analyseTuner());
+
+    refreshHarmonizerInfo();
 
     // Session restores and host preset changes can swap the state underneath the editor.
     if (processor.getPresetManager().getCurrentName() != shownPresetName)
@@ -426,6 +460,50 @@ PomanEditor::Section& PomanEditor::addSection (const juce::String& title, juce::
     return *sections.back();
 }
 
+juce::String PomanEditor::intervalName (int steps) const
+{
+    const bool diatonic = processor.apvts.getRawParameterValue ("harmMode")->load() > 0.5f;
+    const auto sign = juce::String (steps > 0 ? "+" : (steps < 0 ? "-" : ""));
+
+    if (! diatonic)
+        return sign + juce::String (std::abs (steps)) + " st";
+
+    const auto& scales = poman::harmonizerScales();
+    const int scale = juce::jlimit (0, (int) scales.size() - 1, juce::roundToInt (processor.apvts.getRawParameterValue ("harmScale")->load()));
+    if (scales[(size_t) scale].pitchClasses.size() != 7)
+        return sign + juce::String (std::abs (steps)) + " deg";
+
+    static const char* names[] { "Unison", "2nd", "3rd", "4th", "5th", "6th", "7th", "Oct",
+                                 "9th", "10th", "11th", "12th", "13th", "14th", "2 Oct" };
+    return sign + names[juce::jlimit (0, 14, std::abs (steps))];
+}
+
+void PomanEditor::refreshHarmonizerInfo()
+{
+    const bool diatonic = processor.apvts.getRawParameterValue ("harmMode")->load() > 0.5f;
+    const int scale = juce::roundToInt (processor.apvts.getRawParameterValue ("harmScale")->load());
+    if (diatonic != shownDiatonic || scale != shownScale)
+    {
+        shownDiatonic = diatonic;
+        shownScale = scale;
+        for (auto* k : harmIntervalKnobs)
+            k->slider.updateText();
+    }
+
+    juce::String text;
+    const int note = processor.getHarmonizerNote();
+    if (! diatonic)
+        text = "V1 " + juce::String (processor.getHarmonizerSemitones (0)) + " st   |   V2 " + juce::String (processor.getHarmonizerSemitones (1)) + " st";
+    else if (note < 0)
+        text = "Play a note...";
+    else
+        text = poman::midiNoteName (note) + "   >   " + poman::midiNoteName (note + processor.getHarmonizerSemitones (0))
+             + "  +  " + poman::midiNoteName (note + processor.getHarmonizerSemitones (1));
+
+    if (harmInfoLabel.getText() != text)
+        harmInfoLabel.setText (text, juce::dontSendNotification);
+}
+
 void PomanEditor::refreshImpulseResponseLabel()
 {
     const auto name = processor.getImpulseResponseName();
@@ -525,10 +603,12 @@ void PomanEditor::resized()
     presetBox.setBounds (presetRow.reduced (sc (2), 0));
 
     const int gap = sc (10);
-    const int rowHeight = (area.getHeight() - 2 * gap) / 3;
+    const int rowHeight = (area.getHeight() - 3 * gap) / 4;
     auto pedals = area.removeFromTop (rowHeight);
     area.removeFromTop (gap);
     auto ampRow = area.removeFromTop (rowHeight);
+    area.removeFromTop (gap);
+    auto harmRow = area.removeFromTop (rowHeight);
     area.removeFromTop (gap);
     auto fxRow = area;
 
@@ -546,6 +626,7 @@ void PomanEditor::resized()
 
     placeRow (pedals, { sections[0].get(), sections[1].get(), sections[2].get() }, { 1, 3, 3 });
     placeRow (ampRow, { ampSection }, { 1 });
+    placeRow (harmRow, { harmonizerSection }, { 1 });
     placeRow (fxRow, { cabSection, sections[5].get(), sections[6].get() }, { 3, 3, 2 });
 
     for (auto& s : sections)
@@ -560,6 +641,14 @@ void PomanEditor::resized()
 
         if (s.get() == driveSection)
             driveTypeBox.setBounds (titleBar.removeFromRight (sc (150)).reduced (sc (2), sc (1)));
+
+        if (s.get() == harmonizerSection)
+        {
+            harmScaleBox.setBounds (titleBar.removeFromRight (sc (170)).reduced (sc (2), sc (1)));
+            harmKeyBox.setBounds (titleBar.removeFromRight (sc (70)).reduced (sc (2), sc (1)));
+            harmModeBox.setBounds (titleBar.removeFromRight (sc (120)).reduced (sc (2), sc (1)));
+            harmInfoLabel.setBounds (inner.removeFromRight (sc (330)).reduced (sc (8), sc (26)));
+        }
 
         if (s.get() == cabSection)
         {

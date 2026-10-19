@@ -74,6 +74,8 @@ private:
     void refreshPresetBox();
     void showSavePresetDialog();
     void setTunerVisible (bool visible);
+    juce::String intervalName (int steps) const;
+    void refreshHarmonizerInfo();
     void timerCallback() override;
 
     PomanProcessor& processor;
@@ -84,12 +86,20 @@ private:
     Section* ampSection = nullptr;
     Section* cabSection = nullptr;
     Section* driveSection = nullptr;
+    Section* harmonizerSection = nullptr;
 
     Knob* inputKnob = nullptr;
     Knob* outputKnob = nullptr;
 
     juce::ComboBox ampModelBox, driveTypeBox;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> ampModelAttachment, driveTypeAttachment;
+
+    juce::ComboBox harmModeBox, harmKeyBox, harmScaleBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> harmModeAttachment, harmKeyAttachment, harmScaleAttachment;
+    std::array<Knob*, 2> harmIntervalKnobs {};
+    juce::Label harmInfoLabel;
+    bool shownDiatonic = true;
+    int shownScale = -1;
 
     juce::TextButton loadIrButton { "LOAD IR" }, clearIrButton { "BUILT-IN" };
     juce::Label irLabel;

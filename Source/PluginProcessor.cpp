@@ -87,6 +87,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout PomanProcessor::createParame
     addSwitch (layout, "cabOn", "Cab On", true);
     addFloat (layout, "cabMic", "Mic Position", { 0.0f, 1.0f, 0.001f }, 0.5f);
 
+    addSwitch (layout, "harmOn", "Harmonizer On", false);
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "harmMode", 1 }, "Harmonizer Mode", poman::Harmonizer::modeNames(), 1));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "harmKey", 1 }, "Harmonizer Key", poman::Harmonizer::keyNames(), 4));
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "harmScale", 1 }, "Harmonizer Scale", poman::Harmonizer::scaleNames(), 1));
+    // Steps are scale degrees in Diatonic mode and semitones in Chromatic mode.
+    layout.add (std::make_unique<juce::AudioParameterInt> (ParameterID { "harmV1Steps", 1 }, "Voice 1 Interval", -14, 14, 2));
+    addFloat (layout, "harmV1Level", "Voice 1 Level", { 0.0f, 1.0f, 0.001f }, 0.8f);
+    layout.add (std::make_unique<juce::AudioParameterInt> (ParameterID { "harmV2Steps", 1 }, "Voice 2 Interval", -14, 14, 4));
+    addFloat (layout, "harmV2Level", "Voice 2 Level", { 0.0f, 1.0f, 0.001f }, 0.0f);
+    addFloat (layout, "harmDry", "Harmonizer Dry", { 0.0f, 1.0f, 0.001f }, 1.0f);
+
     addSwitch (layout, "dlyOn", "Delay On", false);
     addFloat (layout, "dlyTime", "Delay Time", { 40.0f, 1500.0f, 1.0f, 0.5f }, 380.0f, "ms");
     addFloat (layout, "dlyFeedback", "Delay Feedback", { 0.0f, 0.9f, 0.001f }, 0.3f);
@@ -105,7 +116,7 @@ PomanProcessor::PomanProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PomanState", createParameterLayout())
 {
-    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "revOn", "revSize", "revMix" };
+    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "revOn", "revSize", "revMix" };
     static_assert (std::size (ids) == (size_t) Param::count);
 
     for (size_t i = 0; i < rawParameters.size(); ++i)
@@ -137,6 +148,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     cab.prepare (sampleRate, maxChunkSize);
     delay.prepare (sampleRate, maxChunkSize);
     reverb.prepare (sampleRate, maxChunkSize);
+    harmonizer.prepare (sampleRate);
     tuner.prepare (sampleRate);
 
     inputGain.reset (sampleRate, 0.03);
@@ -170,6 +182,15 @@ void PomanProcessor::updateParameters()
     amp.setParams (ampParams);
 
     cab.setMic (param (Param::cabMic));
+
+    poman::Harmonizer::Params harmParams;
+    harmParams.mode = param (Param::harmMode) > 0.5f ? poman::Harmonizer::Mode::diatonic : poman::Harmonizer::Mode::chromatic;
+    harmParams.key = juce::roundToInt (param (Param::harmKey));
+    harmParams.scale = juce::roundToInt (param (Param::harmScale));
+    harmParams.steps = { juce::roundToInt (param (Param::harmV1Steps)), juce::roundToInt (param (Param::harmV2Steps)) };
+    harmParams.level = { param (Param::harmV1Level), param (Param::harmV2Level) };
+    harmParams.dry = param (Param::harmDry);
+    harmonizer.setParams (harmParams);
     delay.setParams (param (Param::dlyTime), param (Param::dlyFeedback), param (Param::dlyMix));
     reverb.setParams (param (Param::revSize), param (Param::revMix));
 }
@@ -218,6 +239,10 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
     if (tunerOn)
         tuner.push (mono, numSamples);
 
+    const bool harmonizerOn = enabled (Param::harmOn);
+    if (harmonizerOn)
+        harmonizer.track (mono, numSamples);
+
     if (enabled (Param::gateOn))
         gate.process (mono, numSamples);
     if (enabled (Param::octOn))
@@ -233,8 +258,15 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
 
     auto* left = buffer.getWritePointer (0, startSample);
     auto* right = buffer.getWritePointer (1, startSample);
-    juce::FloatVectorOperations::copy (left, mono, numSamples);
-    juce::FloatVectorOperations::copy (right, mono, numSamples);
+    if (harmonizerOn)
+    {
+        harmonizer.process (mono, left, right, numSamples);
+    }
+    else
+    {
+        juce::FloatVectorOperations::copy (left, mono, numSamples);
+        juce::FloatVectorOperations::copy (right, mono, numSamples);
+    }
 
     if (enabled (Param::dlyOn))
         delay.process (left, right, numSamples);

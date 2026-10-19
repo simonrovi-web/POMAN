@@ -6,6 +6,7 @@
 #include "dsp/Ambience.h"
 #include "dsp/AmpModel.h"
 #include "dsp/CabSim.h"
+#include "dsp/Harmonizer.h"
 #include "dsp/NoiseGate.h"
 #include "dsp/Octaver.h"
 #include "dsp/Overdrive.h"
@@ -61,6 +62,10 @@ public:
     void setTunerActive (bool active) { tunerActive.store (active); }
     poman::TunerReading analyseTuner() { return tuner.analyse(); }
 
+    // Harmonizer state for the UI: tracked input note (-1 none) and each voice's interval in semitones.
+    int getHarmonizerNote() const { return harmonizer.getDetectedNote(); }
+    int getHarmonizerSemitones (int voice) const { return harmonizer.getVoiceSemitones (voice); }
+
     juce::AudioProcessorValueTreeState apvts;
 
 private:
@@ -69,7 +74,7 @@ private:
     void processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
     enum class Param
     {
-        input, output, gateOn, gateThreshold, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, dlyOn, dlyTime, dlyFeedback, dlyMix, revOn, revSize, revMix,
+        input, output, gateOn, gateThreshold, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, dlyOn, dlyTime, dlyFeedback, dlyMix, revOn, revSize, revMix,
         count
     };
 
@@ -83,6 +88,7 @@ private:
     poman::Overdrive overdrive;
     poman::AmpModel amp;
     poman::CabSim cab;
+    poman::Harmonizer harmonizer;
     poman::PingPongDelay delay;
     poman::Ambience reverb;
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_basics/juce_audio_basics.h>
+#include "PitchDetect.h"
 #include <atomic>
 #include <vector>
 
@@ -12,11 +13,7 @@ struct TunerReading
     int midiNote = 0;
     float cents = 0.0f;
 
-    juce::String noteName() const
-    {
-        static const char* names[] { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-        return juce::String (names[((midiNote % 12) + 12) % 12]) + juce::String (midiNote / 12 - 1);
-    }
+    juce::String noteName() const { return midiNoteName (midiNote); }
 };
 
 // YIN pitch detector. The audio thread only copies samples into a lock-free FIFO;
@@ -51,67 +48,21 @@ public:
         const int length = windowSize / decimation;
 
         decimated.resize ((size_t) length);
-        double energy = 0.0;
         for (int i = 0; i < length; ++i)
         {
             float sum = 0.0f;
             for (int k = 0; k < decimation; ++k)
                 sum += history[(size_t) (i * decimation + k)];
             decimated[(size_t) i] = sum / (float) decimation;
-            energy += (double) decimated[(size_t) i] * decimated[(size_t) i];
         }
-
-        if (std::sqrt (energy / length) < 0.002)
-            return {};
 
         // Low B on a 7-string (~31 Hz) up to ~1.3 kHz.
-        const int tauMin = juce::jmax (2, (int) (rate / 1300.0));
-        const int tauMax = juce::jmin (length / 2, (int) (rate / 28.0));
-        const int integration = length - tauMax;
-
-        difference.assign ((size_t) tauMax + 2, 0.0f);
-        for (int tau = 1; tau <= tauMax + 1; ++tau)
-        {
-            float sum = 0.0f;
-            for (int j = 0; j < integration; ++j)
-            {
-                const float d = decimated[(size_t) j] - decimated[(size_t) (j + tau)];
-                sum += d * d;
-            }
-            difference[(size_t) tau] = sum;
-        }
-
-        // Cumulative mean normalised difference.
-        float running = 0.0f;
-        difference[0] = 1.0f;
-        for (int tau = 1; tau <= tauMax + 1; ++tau)
-        {
-            running += difference[(size_t) tau];
-            difference[(size_t) tau] = running > 0.0f ? difference[(size_t) tau] * (float) tau / running : 1.0f;
-        }
-
-        int best = -1;
-        for (int tau = tauMin; tau <= tauMax; ++tau)
-        {
-            if (difference[(size_t) tau] < 0.15f)
-            {
-                while (tau + 1 <= tauMax && difference[(size_t) tau + 1] < difference[(size_t) tau])
-                    ++tau;
-                best = tau;
-                break;
-            }
-        }
-
-        if (best < 0)
+        TunerReading reading;
+        reading.frequency = detector.detect (decimated.data(), length, rate, 28.0f, 1300.0f);
+        if (reading.frequency <= 0.0f)
             return {};
 
-        const float a = difference[(size_t) best - 1], b = difference[(size_t) best], c = difference[(size_t) best + 1];
-        const float denom = a - 2.0f * b + c;
-        const float refined = (float) best + (std::abs (denom) > 1.0e-9f ? 0.5f * (a - c) / denom : 0.0f);
-
-        TunerReading reading;
-        reading.frequency = (float) (rate / refined);
-        const float midi = 69.0f + 12.0f * std::log2 (reading.frequency / 440.0f);
+        const float midi = frequencyToMidi (reading.frequency);
         reading.midiNote = juce::roundToInt (midi);
         reading.cents = (midi - (float) reading.midiNote) * 100.0f;
         return reading;
@@ -145,6 +96,7 @@ private:
     juce::AbstractFifo fifo { fifoSize };
     std::vector<float> fifoBuffer = std::vector<float> (fifoSize);
     std::vector<float> history = std::vector<float> (windowSize);
-    std::vector<float> decimated, difference;
+    std::vector<float> decimated;
+    YinDetector detector;
 };
 } // namespace poman
