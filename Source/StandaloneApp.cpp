@@ -137,18 +137,19 @@ public:
         if (snapshotPath.isNotEmpty())
         {
             // --studio switches to the STUDIO page first (finds the page button by its text).
-            if (commandLine.contains ("--studio"))
-                juce::Timer::callAfterDelay (800, [this]
+            const juce::String page = commandLine.contains ("--studio") ? "STUDIO" : (commandLine.contains ("--drums") ? "DRUMS" : "");
+            if (page.isNotEmpty())
+                juce::Timer::callAfterDelay (800, [this, page]
                 {
-                    std::function<void (juce::Component&)> clickStudio = [&clickStudio] (juce::Component& c)
+                    std::function<void (juce::Component&)> clickPage = [&clickPage, page] (juce::Component& c)
                     {
-                        if (auto* b = dynamic_cast<juce::Button*> (&c); b != nullptr && b->getButtonText() == "STUDIO")
+                        if (auto* b = dynamic_cast<juce::Button*> (&c); b != nullptr && b->getButtonText() == page)
                             b->triggerClick();
                         for (auto* child : c.getChildren())
-                            clickStudio (*child);
+                            clickPage (*child);
                     };
                     if (mainWindow != nullptr)
-                        clickStudio (*mainWindow);
+                        clickPage (*mainWindow);
                 });
 
             juce::Timer::callAfterDelay (1500, [this, snapshotPath]

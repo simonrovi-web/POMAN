@@ -2,6 +2,7 @@
 // and prints RMS so the models can be level-matched.
 #include "dsp/AmpModel.h"
 #include "dsp/Overdrive.h"
+#include "dsp/DrumMachine.h"
 #include "dsp/GraphicEQ.h"
 #include "dsp/Harmonizer.h"
 #include "dsp/Modulation.h"
@@ -238,6 +239,107 @@ int main()
         const bool cutsOk = low < -20.0f && high < -20.0f && std::abs (mid) < 1.0f;
         failures += cutsOk ? 0 : 1;
         std::printf ("%s  %-24s 50 Hz %+.1f dB, 630 Hz %+.1f dB, 8 kHz %+.1f dB\n", cutsOk ? "PASS" : "FAIL", "low/high cut", low, mid, high);
+    }
+
+    std::printf ("-- Drum machine --\n");
+    {
+        using poman::DrumMachine;
+        constexpr double bpm = 120.0;
+        const int stepSamples = (int) (sampleRate * 60.0 / bpm / 4.0); // 6000 at 48 kHz
+        const int bar = stepSamples * DrumMachine::numSteps;
+
+        const auto render = [&] (DrumMachine& d, juce::int64 start, int length, int block)
+        {
+            d.prepare (sampleRate);
+            juce::AudioBuffer<float> out (2, length);
+            out.clear();
+            for (int pos = 0; pos < length; pos += block)
+            {
+                const int n = juce::jmin (block, length - pos);
+                d.process (out.getWritePointer (0, pos), out.getWritePointer (1, pos), n, start + pos, bpm);
+            }
+            return out;
+        };
+        const auto firstOnset = [] (const juce::AudioBuffer<float>& b)
+        {
+            for (int i = 0; i < b.getNumSamples(); ++i)
+                if (std::abs (b.getSample (0, i)) > 1.0e-6f)
+                    return i;
+            return -1;
+        };
+
+        // 1) Same audio regardless of the device block size.
+        {
+            DrumMachine a, b, c;
+            for (auto* d : { &a, &b, &c })
+                d->setEnabled (true), d->loadPreset (1); // Metal: busiest pattern
+            const auto ra = render (a, 0, bar * 2, 128), rb = render (b, 0, bar * 2, 512), rc = render (c, 0, bar * 2, 37);
+            float diff = 0.0f;
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < bar * 2; ++i)
+                    diff = std::max ({ diff, std::abs (ra.getSample (ch, i) - rb.getSample (ch, i)), std::abs (ra.getSample (ch, i) - rc.getSample (ch, i)) });
+            const float peak = ra.getMagnitude (0, bar * 2);
+            bool finite = true;
+            for (int i = 0; i < bar * 2; ++i)
+                finite = finite && std::isfinite (ra.getSample (0, i));
+            const bool ok = diff == 0.0f && finite && peak > 0.2f && peak < 1.0f;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s blocks 128/512/37 differ by %.1e, peak %.2f\n", ok ? "PASS" : "FAIL", "block-size independent", diff, peak);
+        }
+
+        // 2) Hits land on the exact sample, also when starting mid-bar, and swing delays off-beats.
+        {
+            DrumMachine d;
+            d.setEnabled (true);
+            d.loadPreset (9); // Empty
+            d.setStep (DrumMachine::kick, 0, 1);
+            const int onBar = firstOnset (render (d, 0, bar, 256));
+            const auto fromMid = render (d, 1000, bar, 256);
+            const int nextBar = firstOnset (fromMid) + 1000;
+
+            DrumMachine s;
+            s.setEnabled (true);
+            s.loadPreset (9);
+            s.setStep (DrumMachine::kick, 1, 1);
+            s.setSwing (0.5f);
+            const int swung = firstOnset (render (s, 0, bar, 256));
+            const bool ok = onBar == 0 && nextBar == bar && swung == stepSamples + stepSamples / 4;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s step 1 @%d, next bar @%d (want %d), swung 16th @%d (want %d)\n", ok ? "PASS" : "FAIL",
+                         "sample-accurate timing", onBar, nextBar, bar, swung, stepSamples + stepSamples / 4);
+        }
+
+        // 3) Accents are louder; stepAt follows the playhead.
+        {
+            DrumMachine n, a;
+            for (auto* d : { &n, &a })
+                d->setEnabled (true), d->loadPreset (9);
+            n.setStep (DrumMachine::snare, 0, 1);
+            a.setStep (DrumMachine::snare, 0, 2);
+            const float ratio = render (a, 0, 4000, 256).getMagnitude (0, 4000) / render (n, 0, 4000, 256).getMagnitude (0, 4000);
+            const bool stepsOk = n.stepAt (0, bpm) == 0 && n.stepAt (stepSamples * 5 + 10, bpm) == 5 && n.stepAt (-1, bpm) == 15;
+            const bool ok = ratio > 1.3f && ratio < 1.45f && stepsOk;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s accent/normal %.2f, step tracking %s\n", ok ? "PASS" : "FAIL", "accents and stepAt", ratio, stepsOk ? "ok" : "wrong");
+        }
+
+        // 4) Pattern and mixer survive a save/restore.
+        {
+            DrumMachine d;
+            d.loadPreset (3);
+            d.setStep (DrumMachine::crash, 7, 2);
+            d.setLevel (DrumMachine::clap, 0.33f);
+            d.setSwing (0.4f);
+            d.setEnabled (true);
+            DrumMachine r;
+            r.fromValueTree (d.toValueTree());
+            bool same = r.isEnabled() && std::abs (r.getSwing() - 0.4f) < 1.0e-4f && std::abs (r.getLevel (DrumMachine::clap) - 0.33f) < 1.0e-3f;
+            for (int i = 0; i < DrumMachine::numInstruments; ++i)
+                for (int s = 0; s < DrumMachine::numSteps; ++s)
+                    same = same && r.getStep (i, s) == d.getStep (i, s);
+            failures += same ? 0 : 1;
+            std::printf ("%s  %-24s\n", same ? "PASS" : "FAIL", "state round trip");
+        }
     }
 
     std::printf ("-- Modulation --\n");

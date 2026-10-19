@@ -181,6 +181,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     harmonizer.prepare (sampleRate);
     modulation.prepare (sampleRate, maxChunkSize);
     recorder->prepare (sampleRate);
+    drums.prepare (sampleRate);
     tuner.prepare (sampleRate);
 
     inputGain.reset (sampleRate, 0.03);
@@ -342,6 +343,13 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
     // Records the finished rig sound, then layers the other tracks and the click on top.
     recorder->process (left, right, numSamples);
 
+    // Drums follow the studio transport and sit on top of the recording, so they are never
+    // captured into a guitar take. When stopped, ringing hits just decay.
+    if (recorder->getState() != poman::MultitrackRecorder::State::stopped)
+        drums.process (left, right, numSamples, recorder->getPlayhead() - numSamples, recorder->getBpm());
+    else
+        drums.processTails (left, right, numSamples);
+
     if (tunerOn)
     {
         juce::FloatVectorOperations::clear (left, numSamples);
@@ -386,8 +394,23 @@ juce::String PomanProcessor::getImpulseResponseName() const
 
 void PomanProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (auto xml = apvts.copyState().createXml())
+    // The drum pattern travels with the session state but stays out of apvts.state, so presets
+    // (which save apvts.state) never carry a drum pattern.
+    auto state = apvts.copyState();
+    state.appendChild (drums.toValueTree(), nullptr);
+    if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
+}
+
+void PomanProcessor::renderDrumsOffline (juce::AudioBuffer<float>& mix)
+{
+    if (! drums.isEnabled() || mix.getNumChannels() < 2)
+        return;
+
+    poman::DrumMachine offline;
+    offline.copySettingsFrom (drums);
+    offline.prepare (getSampleRate() > 0.0 ? getSampleRate() : 48000.0);
+    offline.process (mix.getWritePointer (0), mix.getWritePointer (1), mix.getNumSamples(), 0, recorder->getBpm());
 }
 
 void PomanProcessor::setStateInformation (const void* data, int sizeInBytes)
@@ -396,7 +419,14 @@ void PomanProcessor::setStateInformation (const void* data, int sizeInBytes)
     if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
         return;
 
-    applyState (juce::ValueTree::fromXml (*xml));
+    auto state = juce::ValueTree::fromXml (*xml);
+    const auto drumState = state.getChildWithName ("Drums");
+    if (drumState.isValid())
+    {
+        drums.fromValueTree (drumState);
+        state.removeChild (drumState, nullptr);
+    }
+    applyState (state);
 }
 
 void PomanProcessor::applyState (const juce::ValueTree& state)

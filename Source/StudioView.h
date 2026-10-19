@@ -16,6 +16,9 @@ public:
 
     juce::int64 getVisibleSamples() const { return visibleSamples; }
 
+    // Extra sources for EXPORT MIX (set by the editor to add the drum machine).
+    std::function<void (juce::AudioBuffer<float>&)> exportLayer;
+
 private:
     class Lane : public juce::Component
     {

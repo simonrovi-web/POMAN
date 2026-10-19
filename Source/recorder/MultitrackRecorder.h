@@ -53,7 +53,8 @@ public:
     // Opens a session folder. Folders from 0.5.0 (no session.xml) load each track's newest WAV at 0:00.
     juce::Result openSession (const juce::File& folder);
     juce::File getRecordingsRoot() const { return recordingsRoot; }
-    juce::Result exportMix (juce::File& writtenFile);
+    // addLayers can mix more sources (e.g. the drum machine) into the full-length mix before limiting.
+    juce::Result exportMix (juce::File& writtenFile, const std::function<void (juce::AudioBuffer<float>&)>& addLayers = {});
     juce::File getSessionFolder() const { return sessionFolder; }
 
     void setCountIn (bool enabled) { countInEnabled.store (enabled); }

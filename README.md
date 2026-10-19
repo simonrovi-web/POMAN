@@ -39,6 +39,13 @@ En el VST3 la página no aparece: ahí graba el DAW.
 - **Mod**: chorus (7-21 ms, seno, estéreo en cuadratura), flanger (0,3-4,3 ms, triángulo, realimentación
   limitada con tanh para que sea estable) y tremolo (forma seno-cuadrada y desfase estéreo hasta auto-pan).
 
+## Caja de ritmos (standalone)
+
+Página **DRUMS**: 8 voces sintetizadas (sin samples) y secuenciador de 16 pasos con acentos, swing y nivel por
+instrumento. El tiempo se calcula solo a partir de la posición del transporte del estudio y el BPM, nunca de los
+bloques de audio: suena idéntico con cualquier tamaño de buffer, tras un salto y en el render offline de EXPORT MIX
+(lo verifica una prueba). Se mezcla después del grabador, así que no entra en las tomas de guitarra.
+
 ## Extras
 
 - **Presets**: 24 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
@@ -63,7 +70,7 @@ Se genera:
 ```bash
 cmake --build build --config Release --target POMANTests POMANDspTests POMANRecorderTests
 build/POMANTests_artefacts/Release/POMANTests.exe        # precisión del afinador
-build/POMANDspTests_artefacts/Release/POMANDspTests.exe  # render de amps/drives, intervalos y afinación del harmonizer
+build/POMANDspTests_artefacts/Release/POMANDspTests.exe  # amps/drives, harmonizer, EQ, mod y caja de ritmos
 build/POMANRecorderTests_artefacts/Release/POMANRecorderTests.exe  # grabación, latencia, mute/solo, overdub, export, metrónomo, cuenta atrás, sesiones
 ```
 

@@ -122,6 +122,25 @@ int main()
                     && reader->lengthInSamples == recorder.getSessionLength(),
                 "exported Mix.wav has session length", mixFile.getFileName());
 
+        // 5b) Extra layers (the drum machine) are mixed into the export.
+        {
+            juce::File layered;
+            bool called = false;
+            const auto res = recorder.exportMix (layered, [&] (juce::AudioBuffer<float>& m)
+            {
+                called = true;
+                m.clear();
+                m.setSample (0, 10, 0.5f);
+                m.setSample (1, 10, 0.5f);
+            });
+            std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (layered));
+            juce::AudioBuffer<float> back (2, 200);
+            if (r != nullptr)
+                r->read (&back, 0, 200, 0, true, true);
+            expect (res.wasOk() && called && std::abs (back.getSample (0, 10) - 0.5f) < 1.0e-3f && back.getSample (0, 100) == 0.0f,
+                    "export mix includes extra layers");
+        }
+
         // 6) Metronome adds a click on the downbeat when playing.
         recorder.clearTrack (0);
         recorder.clearTrack (1);

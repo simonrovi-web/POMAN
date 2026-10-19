@@ -6,6 +6,7 @@
 #include "dsp/Ambience.h"
 #include "dsp/AmpModel.h"
 #include "dsp/CabSim.h"
+#include "dsp/DrumMachine.h"
 #include "dsp/GraphicEQ.h"
 #include "dsp/Harmonizer.h"
 #include "dsp/Modulation.h"
@@ -57,6 +58,9 @@ public:
 
     poman::PresetManager& getPresetManager() { return *presetManager; }
     poman::MultitrackRecorder& getRecorder() { return *recorder; }
+    poman::DrumMachine& getDrums() { return drums; }
+    // Renders the drum pattern from 0:00 over the whole buffer (used by the mix export).
+    void renderDrumsOffline (juce::AudioBuffer<float>& mix);
 
     // Single reader of the EQ parameters, used by the audio path and the editor's response curve.
     poman::GraphicEQ::Settings getEqSettings() const;
@@ -97,6 +101,7 @@ private:
     poman::AmpModel amp;
     poman::CabSim cab;
     poman::GraphicEQ graphicEq;
+    poman::DrumMachine drums;
     poman::Harmonizer harmonizer;
     poman::Modulation modulation;
     poman::PingPongDelay delay;

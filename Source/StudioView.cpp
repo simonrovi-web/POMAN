@@ -167,7 +167,7 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
     exportButton.onClick = [this]
     {
         juce::File written;
-        const auto result = recorder.exportMix (written);
+        const auto result = recorder.exportMix (written, exportLayer);
         setStatus (result.wasOk() ? "Exported " + written.getFullPathName() : result.getErrorMessage(), result.failed());
     };
 
@@ -313,6 +313,10 @@ void StudioView::timerCallback()
         timeLabel.setText (formatPosition (recorder.getPlayhead()), juce::dontSendNotification);
         timeLabel.setColour (juce::Label::textColourId, palette::text);
     }
+
+    // Tempo is shared with the DRUMS page.
+    if (! bpmSlider.isMouseButtonDown() && bpmSlider.getValue() != recorder.getBpm())
+        bpmSlider.setValue (recorder.getBpm(), juce::dontSendNotification);
     refreshControls();
     repaint();
 }

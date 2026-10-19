@@ -298,9 +298,12 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     if (processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
     {
         studioView = std::make_unique<StudioView> (processor.getRecorder());
+        studioView->exportLayer = [this] (juce::AudioBuffer<float>& mix) { processor.renderDrumsOffline (mix); };
         addChildComponent (*studioView);
+        drumView = std::make_unique<DrumView> (processor.getDrums(), processor.getRecorder());
+        addChildComponent (*drumView);
 
-        for (auto* b : { &rigPageButton, &studioPageButton })
+        for (auto* b : { &rigPageButton, &studioPageButton, &drumsPageButton })
         {
             b->setRadioGroupId (1001);
             b->setClickingTogglesState (true);
@@ -308,8 +311,9 @@ PomanEditor::PomanEditor (PomanProcessor& p)
             addAndMakeVisible (*b);
         }
         rigPageButton.setToggleState (true, juce::dontSendNotification);
-        rigPageButton.onClick = [this] { showStudio (false); };
-        studioPageButton.onClick = [this] { showStudio (true); };
+        rigPageButton.onClick = [this] { showPage (Page::rig); };
+        studioPageButton.onClick = [this] { showPage (Page::studio); };
+        drumsPageButton.onClick = [this] { showPage (Page::drums); };
     }
 
     setResizable (true, true);
@@ -368,14 +372,17 @@ void PomanEditor::showSavePresetDialog()
     }), false);
 }
 
-void PomanEditor::showStudio (bool studio)
+void PomanEditor::showPage (Page page)
 {
     if (studioView == nullptr)
         return;
 
-    studioView->setVisible (studio);
-    if (studio)
+    studioView->setVisible (page == Page::studio);
+    drumView->setVisible (page == Page::drums);
+    if (page == Page::studio)
         studioView->toFront (false);
+    else if (page == Page::drums)
+        drumView->toFront (false);
     else if (tunerDisplay.isVisible())
         tunerDisplay.toFront (false);
 }
@@ -723,7 +730,8 @@ void PomanEditor::paint (juce::Graphics& g)
     g.drawText ("POMAN", header, juce::Justification::centredLeft);
     g.setColour (palette::biolume);
     g.setFont (juce::FontOptions (11.0f * scale));
-    g.drawText ("GUITAR AMP SUITE", header.withTrimmedLeft ((int) (128 * scale)), juce::Justification::centredLeft);
+    if (studioView == nullptr) // the standalone needs the room for its page buttons
+        g.drawText ("GUITAR AMP SUITE", header.withTrimmedLeft ((int) (128 * scale)), juce::Justification::centredLeft);
 
     for (auto& s : sections)
     {
@@ -762,12 +770,13 @@ void PomanEditor::resized()
         k->slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     }
 
-    header.removeFromLeft (sc (studioView != nullptr ? 250 : 270));
+    header.removeFromLeft (sc (studioView != nullptr ? 150 : 270));
     if (studioView != nullptr)
     {
-        auto pages = header.removeFromLeft (sc (124)).withSizeKeepingCentre (sc (124), sc (30));
-        rigPageButton.setBounds (pages.removeFromLeft (sc (62)).reduced (sc (2), 0));
-        studioPageButton.setBounds (pages.reduced (sc (2), 0));
+        auto pages = header.removeFromLeft (sc (204)).withSizeKeepingCentre (sc (204), sc (30));
+        rigPageButton.setBounds (pages.removeFromLeft (sc (58)).reduced (sc (2), 0));
+        studioPageButton.setBounds (pages.removeFromLeft (sc (74)).reduced (sc (2), 0));
+        drumsPageButton.setBounds (pages.reduced (sc (2), 0));
         header.removeFromLeft (sc (8));
     }
     auto presetRow = header.withSizeKeepingCentre (header.getWidth(), sc (30));
@@ -861,5 +870,8 @@ void PomanEditor::resized()
     tunerDisplay.setBounds (ampSection->bounds);
 
     if (studioView != nullptr)
+    {
         studioView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
+        drumView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
+    }
 }

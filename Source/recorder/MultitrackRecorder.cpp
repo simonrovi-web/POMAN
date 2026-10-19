@@ -402,7 +402,7 @@ juce::int64 MultitrackRecorder::getSessionLength() const
     return end;
 }
 
-juce::Result MultitrackRecorder::exportMix (juce::File& writtenFile)
+juce::Result MultitrackRecorder::exportMix (juce::File& writtenFile, const std::function<void (juce::AudioBuffer<float>&)>& addLayers)
 {
     const auto length = getSessionLength();
     if (length <= 0)
@@ -426,6 +426,9 @@ juce::Result MultitrackRecorder::exportMix (juce::File& writtenFile)
         for (int ch = 0; ch < 2; ++ch)
             mix.addFrom (ch, (int) take->start, take->audio, ch, 0, take->audio.getNumSamples(), trackVolume[(size_t) t].load());
     }
+
+    if (addLayers)
+        addLayers (mix);
 
     // Soft safety limit so a hot mix never wraps when converted to 24-bit.
     for (int ch = 0; ch < 2; ++ch)

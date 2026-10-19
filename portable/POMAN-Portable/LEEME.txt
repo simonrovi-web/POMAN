@@ -1,8 +1,20 @@
-POMAN - Guitar Amp Suite (version portable 0.8.0)
+POMAN - Guitar Amp Suite (version portable 0.9.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.9.0
+- Caja de ritmos: boton DRUMS (arriba, junto a RIG y STUDIO).
+  * 8 instrumentos sintetizados: bombo, caja, palmas, hi-hat cerrado y
+    abierto, tom grave, tom agudo y crash. Volumen por instrumento.
+  * Secuenciador de 16 pasos (1 compas en semicorcheas):
+    clic = poner/quitar golpe, clic derecho = acento, arrastrar = pintar.
+  * 10 ritmos: Rock, Metal, Djent, Funk, Shuffle, Pop, Punk, Reggae,
+    Tom Groove y Empty. SWING y VOLUME generales.
+  * Usa el mismo PLAY/STOP y BPM que STUDIO: graba tu guitarra encima.
+    La bateria NO se graba dentro de tus pistas; EXPORT MIX si la incluye.
+  * El patron se guarda solo al cerrar la app.
 
 Novedades 0.8.0
 - GRAPHIC EQ (fila amarilla, activalo con su LED): 10 bandas por octava
