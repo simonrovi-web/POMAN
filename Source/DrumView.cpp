@@ -145,6 +145,15 @@ DrumView::DrumView (DrumMachine& d, poman::MultitrackRecorder& r) : drums (d), r
     };
     addAndMakeVisible (patternBox);
 
+    kitBox.addItemList (DrumMachine::kitNames(), 1);
+    kitBox.setColour (juce::ComboBox::outlineColourId, palette::ember.withAlpha (0.6f));
+    kitBox.onChange = [this]
+    {
+        drums.setKit (kitBox.getSelectedId() - 1);
+        roomSlider.setEnabled (drums.getKit() == (int) DrumMachine::Kit::studio);
+    };
+    addAndMakeVisible (kitBox);
+
     bpmSlider.setSliderStyle (juce::Slider::IncDecButtons);
     bpmSlider.setRange (40.0, 240.0, 1.0);
     bpmSlider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 44, 24);
@@ -157,10 +166,16 @@ DrumView::DrumView (DrumMachine& d, poman::MultitrackRecorder& r) : drums (d), r
     styleHorizontal (volumeSlider, palette::ember);
     volumeSlider.setRange (0.0, 1.25, 0.001);
     volumeSlider.onValueChange = [this] { drums.setMasterLevel ((float) volumeSlider.getValue()); };
+    styleHorizontal (roomSlider, palette::ember);
+    roomSlider.setRange (0.0, 1.0, 0.01);
+    roomSlider.setTooltip ("Room ambience (Studio kit)");
+    roomSlider.onValueChange = [this] { drums.setRoom ((float) roomSlider.getValue()); };
     addAndMakeVisible (swingSlider);
     addAndMakeVisible (volumeSlider);
+    addAndMakeVisible (roomSlider);
 
-    for (auto [label, text] : { std::pair { &bpmLabel, "BPM" }, std::pair { &swingLabel, "SWING" }, std::pair { &volumeLabel, "VOLUME" } })
+    for (auto [label, text] : { std::pair { &bpmLabel, "BPM" }, std::pair { &swingLabel, "SWING" }, std::pair { &volumeLabel, "VOLUME" },
+                                std::pair { &roomLabel, "ROOM" }, std::pair { &kitLabel, "KIT" } })
     {
         label->setText (text, juce::dontSendNotification);
         label->setFont (juce::FontOptions (12.0f, juce::Font::bold));
@@ -238,6 +253,11 @@ void DrumView::refreshControls()
         swingSlider.setValue (drums.getSwing(), juce::dontSendNotification);
     if (! volumeSlider.isMouseButtonDown())
         volumeSlider.setValue (drums.getMasterLevel(), juce::dontSendNotification);
+    if (! roomSlider.isMouseButtonDown())
+        roomSlider.setValue (drums.getRoom(), juce::dontSendNotification);
+    if (! kitBox.isPopupActive() && kitBox.getSelectedId() != drums.getKit() + 1)
+        kitBox.setSelectedId (drums.getKit() + 1, juce::dontSendNotification);
+    roomSlider.setEnabled (drums.getKit() == (int) DrumMachine::Kit::studio);
 }
 
 void DrumView::timerCallback()
@@ -294,6 +314,9 @@ void DrumView::resized()
     bar1.removeFromLeft (10);
     bpmLabel.setBounds (bar1.removeFromLeft (36));
     bpmSlider.setBounds (bar1.removeFromLeft (110).reduced (0, 4));
+    bar1.removeFromLeft (20);
+    kitLabel.setBounds (bar1.removeFromLeft (32));
+    kitBox.setBounds (bar1.removeFromLeft (150).reduced (0, 5));
     drumsOnButton.setBounds (bar1.removeFromRight (110).reduced (3, 2));
 
     area.removeFromTop (6);
@@ -302,10 +325,13 @@ void DrumView::resized()
     clearButton.setBounds (bar2.removeFromLeft (80).reduced (3, 2));
     bar2.removeFromLeft (20);
     swingLabel.setBounds (bar2.removeFromLeft (52));
-    swingSlider.setBounds (bar2.removeFromLeft (160));
+    swingSlider.setBounds (bar2.removeFromLeft (130));
     bar2.removeFromLeft (20);
     volumeLabel.setBounds (bar2.removeFromLeft (60));
-    volumeSlider.setBounds (bar2.removeFromLeft (160));
+    volumeSlider.setBounds (bar2.removeFromLeft (130));
+    bar2.removeFromLeft (20);
+    roomLabel.setBounds (bar2.removeFromLeft (48));
+    roomSlider.setBounds (bar2.removeFromLeft (130));
 
     hintLabel.setBounds (area.removeFromBottom (24));
     area.removeFromTop (10);

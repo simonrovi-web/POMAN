@@ -11,3 +11,4 @@ portable/*/*.settings
 portable/*/Presets/
 portable/*.backup-*
 portable/*/Recordings/
+previews/

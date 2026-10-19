@@ -41,7 +41,8 @@ En el VST3 la página no aparece: ahí graba el DAW.
 
 ## Caja de ritmos (standalone)
 
-Página **DRUMS**: 8 voces sintetizadas (sin samples) y secuenciador de 16 pasos con acentos, swing y nivel por
+Página **DRUMS**: 8 voces sintetizadas (sin samples) en dos kits —*Studio* (modelado acústico con
+sala y compresión de bus) y *Electronic* (estilo 808)— y secuenciador de 16 pasos con acentos, swing y nivel por
 instrumento. El tiempo se calcula solo a partir de la posición del transporte del estudio y el BPM, nunca de los
 bloques de audio: suena idéntico con cualquier tamaño de buffer, tras un salto y en el render offline de EXPORT MIX
 (lo verifica una prueba). Se mezcla después del grabador, así que no entra en las tomas de guitarra.
@@ -71,6 +72,7 @@ Se genera:
 cmake --build build --config Release --target POMANTests POMANDspTests POMANRecorderTests
 build/POMANTests_artefacts/Release/POMANTests.exe        # precisión del afinador
 build/POMANDspTests_artefacts/Release/POMANDspTests.exe  # amps/drives, harmonizer, EQ, mod y caja de ritmos
+build/POMANDrumAnalysis_artefacts/Release/POMANDrumAnalysis.exe previews/drums  # mide cada voz y genera WAV
 build/POMANRecorderTests_artefacts/Release/POMANRecorderTests.exe  # grabación, latencia, mute/solo, overdub, export, metrónomo, cuenta atrás, sesiones
 ```
 

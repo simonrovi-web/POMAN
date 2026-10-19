@@ -1,6 +1,6 @@
 ﻿cmake_minimum_required(VERSION 3.22)
 
-project(POMAN VERSION 0.9.0 LANGUAGES C CXX)
+project(POMAN VERSION 0.9.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -76,3 +76,10 @@ target_sources(POMANRecorderTests PRIVATE Tests/RecorderTest.cpp Source/recorder
 target_include_directories(POMANRecorderTests PRIVATE Source)
 target_compile_definitions(POMANRecorderTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(POMANRecorderTests PRIVATE juce::juce_audio_formats juce::juce_events PUBLIC juce::juce_recommended_config_flags)
+
+# Drum voice analysis + WAV previews: POMANDrumAnalysis <output folder>
+juce_add_console_app(POMANDrumAnalysis PRODUCT_NAME "POMANDrumAnalysis")
+target_sources(POMANDrumAnalysis PRIVATE Tests/DrumAnalysis.cpp)
+target_include_directories(POMANDrumAnalysis PRIVATE Source)
+target_compile_definitions(POMANDrumAnalysis PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(POMANDrumAnalysis PRIVATE juce::juce_dsp juce::juce_audio_formats juce::juce_data_structures PUBLIC juce::juce_recommended_config_flags)

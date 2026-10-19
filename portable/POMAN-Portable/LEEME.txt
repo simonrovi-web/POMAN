@@ -1,8 +1,15 @@
-POMAN - Guitar Amp Suite (version portable 0.9.0)
+POMAN - Guitar Amp Suite (version portable 0.9.1)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.9.1
+- Bateria con sonido nuevo: KIT "Studio" (por defecto), modelado como un
+  kit acustico grabado: bombo con golpe de mazo, caja con cuerpo y
+  bordonera, toms con ataque de baqueta, platos sin aspereza digital,
+  sala (control ROOM) y compresion de bus.
+- El kit anterior sigue disponible como KIT "Electronic" (estilo 808).
 
 Novedades 0.9.0
 - Caja de ritmos: boton DRUMS (arriba, junto a RIG y STUDIO).

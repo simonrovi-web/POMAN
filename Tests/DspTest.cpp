@@ -268,11 +268,12 @@ int main()
             return -1;
         };
 
-        // 1) Same audio regardless of the device block size.
+        // 1) Same audio regardless of the device block size (both kits: room and bus are per-sample too).
+        for (int kit = 0; kit < (int) DrumMachine::Kit::count; ++kit)
         {
             DrumMachine a, b, c;
             for (auto* d : { &a, &b, &c })
-                d->setEnabled (true), d->loadPreset (1); // Metal: busiest pattern
+                d->setEnabled (true), d->loadPreset (1), d->setKit (kit); // Metal: busiest pattern
             const auto ra = render (a, 0, bar * 2, 128), rb = render (b, 0, bar * 2, 512), rc = render (c, 0, bar * 2, 37);
             float diff = 0.0f;
             for (int ch = 0; ch < 2; ++ch)
@@ -284,7 +285,8 @@ int main()
                 finite = finite && std::isfinite (ra.getSample (0, i));
             const bool ok = diff == 0.0f && finite && peak > 0.2f && peak < 1.0f;
             failures += ok ? 0 : 1;
-            std::printf ("%s  %-24s blocks 128/512/37 differ by %.1e, peak %.2f\n", ok ? "PASS" : "FAIL", "block-size independent", diff, peak);
+            std::printf ("%s  %-24s %s kit: blocks 128/512/37 differ by %.1e, peak %.2f\n", ok ? "PASS" : "FAIL", "block-size independent",
+                         DrumMachine::kitNames()[kit].toRawUTF8(), diff, peak);
         }
 
         // 2) Hits land on the exact sample, also when starting mid-bar, and swing delays off-beats.
@@ -313,7 +315,7 @@ int main()
         {
             DrumMachine n, a;
             for (auto* d : { &n, &a })
-                d->setEnabled (true), d->loadPreset (9);
+                d->setEnabled (true), d->loadPreset (9), d->setKit ((int) DrumMachine::Kit::electronic); // dry kit: exact velocity ratio
             n.setStep (DrumMachine::snare, 0, 1);
             a.setStep (DrumMachine::snare, 0, 2);
             const float ratio = render (a, 0, 4000, 256).getMagnitude (0, 4000) / render (n, 0, 4000, 256).getMagnitude (0, 4000);
@@ -321,6 +323,72 @@ int main()
             const bool ok = ratio > 1.3f && ratio < 1.45f && stepsOk;
             failures += ok ? 0 : 1;
             std::printf ("%s  %-24s accent/normal %.2f, step tracking %s\n", ok ? "PASS" : "FAIL", "accents and stepAt", ratio, stepsOk ? "ok" : "wrong");
+        }
+
+        // 3b) Studio kit voices sit in realistic spectral and decay ranges; no factory groove clips.
+        {
+            struct Range { const char* name; float centroidLo, centroidHi, decayLo, decayHi; };
+            const Range ranges[] { { "kick", 0, 300, 0.4f, 1.2f },     { "snare", 2000, 6000, 0.3f, 1.0f },
+                                   { "clap", 1200, 4000, 0.4f, 1.5f }, { "closed hat", 7000, 12000, 0.05f, 0.4f },
+                                   { "open hat", 7000, 12000, 0.8f, 2.5f }, { "low tom", 0, 300, 0.6f, 1.6f },
+                                   { "high tom", 0, 400, 0.5f, 1.3f }, { "crash", 5000, 10000, 2.0f, 4.0f } };
+            juce::dsp::FFT fft (13);
+            bool allOk = true;
+            for (int inst = 0; inst < DrumMachine::numInstruments; ++inst)
+            {
+                DrumMachine d;
+                d.setEnabled (true);
+                d.loadPreset (9);
+                d.setStep (inst, 0, 1);
+                // 30 BPM: one bar lasts 8 s, so the 4 s render holds a single hit and its full decay.
+                d.prepare (sampleRate);
+                juce::AudioBuffer<float> out (2, (int) (sampleRate * 4.0));
+                out.clear();
+                for (int pos = 0; pos < out.getNumSamples(); pos += 256)
+                    d.process (out.getWritePointer (0, pos), out.getWritePointer (1, pos), juce::jmin (256, out.getNumSamples() - pos), pos, 30.0);
+                const int n = out.getNumSamples();
+                const float peak = out.getMagnitude (0, n);
+                float decay = 0.0f;
+                for (int i = n - 1; i >= 0; --i)
+                    if (std::abs (0.5f * (out.getSample (0, i) + out.getSample (1, i))) > peak * 0.01f)
+                    {
+                        decay = (float) (i / sampleRate);
+                        break;
+                    }
+                std::vector<float> spec (8192 * 2, 0.0f);
+                const int len = (int) (0.1 * sampleRate);
+                for (int i = 0; i < len; ++i)
+                    spec[(size_t) i] = 0.5f * (out.getSample (0, i) + out.getSample (1, i))
+                                     * (0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * i / (len - 1)));
+                fft.performFrequencyOnlyForwardTransform (spec.data());
+                double num = 0.0, den = 0.0;
+                for (int k = 1; k < 4096; ++k)
+                    num += k * sampleRate / 8192.0 * spec[(size_t) k] * spec[(size_t) k], den += spec[(size_t) k] * spec[(size_t) k];
+                const float centroid = (float) (num / den);
+                const auto& r = ranges[inst];
+                const bool ok = centroid >= r.centroidLo && centroid <= r.centroidHi && decay >= r.decayLo && decay <= r.decayHi
+                             && peak > 0.05f && peak < 0.9f;
+                allOk = allOk && ok;
+                if (! ok)
+                    std::printf ("      %-10s centroid %.0f Hz decay %.2f s peak %.2f out of range\n", r.name, centroid, decay, peak);
+            }
+            float worstGroove = 0.0f;
+            for (int kit = 0; kit < (int) DrumMachine::Kit::count; ++kit)
+                for (int p = 0; p < (int) DrumMachine::patternPresets().size(); ++p)
+                {
+                    DrumMachine d;
+                    d.setEnabled (true);
+                    d.setKit (kit);
+                    d.loadPreset (p);
+                    const float groovePeak = render (d, 0, bar * 2, 256).getMagnitude (0, bar * 2);
+                    if (groovePeak > 0.9f)
+                        std::printf ("      %s kit, %s groove peaks at %.2f\n", DrumMachine::kitNames()[kit].toRawUTF8(),
+                                     DrumMachine::patternPresets()[(size_t) p].name, groovePeak);
+                    worstGroove = std::max (worstGroove, groovePeak);
+                }
+            allOk = allOk && worstGroove < 0.95f;
+            failures += allOk ? 0 : 1;
+            std::printf ("%s  %-24s 8 voices in range, loudest groove peak %.2f\n", allOk ? "PASS" : "FAIL", "studio kit character", worstGroove);
         }
 
         // 4) Pattern and mixer survive a save/restore.
@@ -331,12 +399,22 @@ int main()
             d.setLevel (DrumMachine::clap, 0.33f);
             d.setSwing (0.4f);
             d.setEnabled (true);
+            d.setKit ((int) DrumMachine::Kit::electronic);
+            d.setRoom (0.6f);
             DrumMachine r;
             r.fromValueTree (d.toValueTree());
-            bool same = r.isEnabled() && std::abs (r.getSwing() - 0.4f) < 1.0e-4f && std::abs (r.getLevel (DrumMachine::clap) - 0.33f) < 1.0e-3f;
+            bool same = r.isEnabled() && r.getKit() == (int) DrumMachine::Kit::electronic && std::abs (r.getRoom() - 0.6f) < 1.0e-4f
+                        && std::abs (r.getSwing() - 0.4f) < 1.0e-4f && std::abs (r.getLevel (DrumMachine::clap) - 0.33f) < 1.0e-3f;
             for (int i = 0; i < DrumMachine::numInstruments; ++i)
                 for (int s = 0; s < DrumMachine::numSteps; ++s)
                     same = same && r.getStep (i, s) == d.getStep (i, s);
+            // A state saved by 0.9.0 (no "kit" property) opens with the Studio kit.
+            auto legacy = d.toValueTree();
+            legacy.removeProperty ("kit", nullptr);
+            DrumMachine fromLegacy;
+            fromLegacy.setKit ((int) DrumMachine::Kit::electronic);
+            fromLegacy.fromValueTree (legacy);
+            same = same && fromLegacy.getKit() == (int) DrumMachine::Kit::studio;
             failures += same ? 0 : 1;
             std::printf ("%s  %-24s\n", same ? "PASS" : "FAIL", "state round trip");
         }

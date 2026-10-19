@@ -41,9 +41,9 @@ private:
     poman::MultitrackRecorder& recorder;
 
     juce::TextButton rewindButton { "|<" }, playButton { "PLAY" }, stopButton { "STOP" }, drumsOnButton { "DRUMS ON" }, clearButton { "CLEAR" };
-    juce::ComboBox patternBox;
-    juce::Slider bpmSlider, swingSlider, volumeSlider;
-    juce::Label bpmLabel, swingLabel, volumeLabel, hintLabel, positionLabel;
+    juce::ComboBox patternBox, kitBox;
+    juce::Slider bpmSlider, swingSlider, volumeSlider, roomSlider;
+    juce::Label bpmLabel, swingLabel, volumeLabel, roomLabel, kitLabel, hintLabel, positionLabel;
     std::array<juce::Label, poman::DrumMachine::numInstruments> names;
     std::array<juce::Slider, poman::DrumMachine::numInstruments> levels;
     Grid grid { *this };
