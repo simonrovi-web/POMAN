@@ -9,3 +9,4 @@ portable/*/Abyssal.settings
 portable/*/*.exe
 portable/*/*.settings
 portable/*/Presets/
+portable/*.backup-*
