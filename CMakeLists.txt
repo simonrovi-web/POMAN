@@ -83,3 +83,10 @@ target_sources(POMANDrumAnalysis PRIVATE Tests/DrumAnalysis.cpp)
 target_include_directories(POMANDrumAnalysis PRIVATE Source)
 target_compile_definitions(POMANDrumAnalysis PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(POMANDrumAnalysis PRIVATE juce::juce_dsp juce::juce_audio_formats juce::juce_data_structures PUBLIC juce::juce_recommended_config_flags)
+
+# CPU and aliasing measurements per DSP module
+juce_add_console_app(POMANBench PRODUCT_NAME "POMANBench")
+target_sources(POMANBench PRIVATE Tests/Bench.cpp)
+target_include_directories(POMANBench PRIVATE Source)
+target_compile_definitions(POMANBench PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(POMANBench PRIVATE juce::juce_dsp juce::juce_data_structures PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags)
