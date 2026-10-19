@@ -24,7 +24,7 @@ public:
     {
         sampleRate = newSampleRate;
         oversampling = std::make_unique<juce::dsp::Oversampling<float>> (
-            1, oversamplingOrder, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, false);
+            1, oversamplingOrder, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, false, false);
         oversampling->initProcessing ((size_t) maxBlockSize);
         osRate = sampleRate * (double) (1 << oversamplingOrder);
 

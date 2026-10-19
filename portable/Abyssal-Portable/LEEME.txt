@@ -10,8 +10,12 @@ escritorio) y ejecuta Abyssal.exe.
 - Pon tus impulsos de cabina (.wav / .aif) en la carpeta IRs. Los IR
   cargados desde ahi se guardan con ruta relativa, asi que siguen
   funcionando si mueves la carpeta.
-- Primer uso: Options > Audio/MIDI Settings, elige tu interfaz (ASIO si
-  la tienes) y la entrada de la guitarra.
+- Primer uso: elige automaticamente tu interfaz ASIO (o "Windows Audio
+  (Low Latency Mode)" si no hay ASIO) con el buffer mas pequeno estable
+  (>= 64 muestras). Puedes cambiarlo en Options > Audio/MIDI Settings.
+- Latencia: baja el "Audio buffer size" (64 o 128) y usa 48 kHz o mas.
+  Si oyes clics/crujidos, sube un paso el buffer. Cierra otras apps
+  (Ableton, FL Studio) que esten usando el mismo driver ASIO.
 - Para empezar de cero, borra Abyssal.settings.
 
 Requisitos: Windows 10/11 de 64 bits.
