@@ -125,9 +125,10 @@ void PomanLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& bu
 
 namespace
 {
-juce::File defaultIrFolder()
+// Starts file choosers in the portable folder's IRs/ or Models/ when it exists.
+juce::File defaultFolder (const char* name)
 {
-    const auto bundled = poman::portableRoot().getChildFile ("IRs");
+    const auto bundled = poman::portableRoot().getChildFile (name);
     return bundled.isDirectory() ? bundled : juce::File();
 }
 } // namespace
@@ -187,7 +188,9 @@ PomanEditor::PomanEditor (PomanProcessor& p)
                                 &addKnob ("ampTreble", "TREBLE"), &addKnob ("ampPresence", "PRESENCE"),
                                 &addKnob ("ampDepth", "DEPTH"), &addKnob ("ampMaster", "MASTER", true) });
 
-    cabSection = &addSection ("HULL // CABINET", palette::biolume, "cabOn", { &addKnob ("cabMic", "MIC POS") });
+    cabSection = &addSection ("CABINET", palette::biolume, "cabOn",
+                              { &addKnob ("cabMic", "MIC POS"), &addKnob ("cabMix", "A/B MIX"),
+                                &addKnob ("cabLowCut", "LOW CUT"), &addKnob ("cabHighCut", "HIGH CUT") });
     delayTimeKnob = &addKnob ("dlyTime", "TIME");
     delaySection = &addSection ("DELAY", palette::pressure, "dlyOn",
                 { delayTimeKnob, &addKnob ("dlyFeedback", "FEEDBACK"), &addKnob ("dlyMix", "MIX") });
@@ -257,7 +260,7 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     addAndMakeVisible (harmInfoLabel);
 
     // Item ids must follow the choice order: ComboBoxAttachment maps id - 1 to the parameter index.
-    ampModelBox.addItemList (poman::AmpModel::modelNames(), 1);
+    ampModelBox.addItemList (PomanProcessor::ampModelChoices(), 1);
     ampModelBox.setColour (juce::ComboBox::outlineColourId, palette::biolume.withAlpha (0.6f));
     ampModelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, "ampChannel", ampModelBox);
     addAndMakeVisible (ampModelBox);
@@ -267,37 +270,34 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     driveTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, "odType", driveTypeBox);
     addAndMakeVisible (driveTypeBox);
 
-    for (auto* b : { &loadIrButton, &clearIrButton })
+    for (auto* b : { &irAButton, &irBButton, &builtInCabButton, &loadNamButton })
     {
         b->setColour (juce::TextButton::buttonOnColourId, palette::biolume);
         addAndMakeVisible (*b);
     }
-
-    loadIrButton.onClick = [this]
+    irAButton.setTooltip ("Load an impulse response into slot A");
+    irBButton.setTooltip ("Load a second IR into slot B (blended with A/B MIX, phase-aligned automatically)");
+    builtInCabButton.setTooltip ("Remove both IRs and use the built-in 4x12 model");
+    loadNamButton.setTooltip ("Load a Neural Amp Modeler capture (.nam) and select NAM Capture");
+    irAButton.onClick = [this] { chooseFile (PomanProcessor::FileSlot::irA); };
+    irBButton.onClick = [this] { chooseFile (PomanProcessor::FileSlot::irB); };
+    loadNamButton.onClick = [this] { chooseFile (PomanProcessor::FileSlot::namModel); };
+    builtInCabButton.onClick = [this]
     {
-        fileChooser = std::make_unique<juce::FileChooser> ("Load cabinet impulse response", defaultIrFolder(), "*.wav;*.aif;*.aiff");
-        fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
-                                  [this] (const juce::FileChooser& chooser)
-                                  {
-                                      const auto file = chooser.getResult();
-                                      if (file.existsAsFile())
-                                      {
-                                          processor.loadImpulseResponse (file);
-                                          refreshImpulseResponseLabel();
-                                      }
-                                  });
+        processor.clearFile (PomanProcessor::FileSlot::irA);
+        processor.clearFile (PomanProcessor::FileSlot::irB);
+        refreshFileLabels();
     };
 
-    clearIrButton.onClick = [this]
+    for (auto* l : { &irLabel, &namLabel })
     {
-        processor.clearImpulseResponse();
-        refreshImpulseResponseLabel();
-    };
-
+        l->setFont (juce::FontOptions (12.0f));
+        l->setMinimumHorizontalScale (0.7f);
+        addAndMakeVisible (*l);
+    }
     irLabel.setJustificationType (juce::Justification::centred);
-    irLabel.setFont (juce::FontOptions (12.0f));
-    addAndMakeVisible (irLabel);
-    refreshImpulseResponseLabel();
+    namLabel.setJustificationType (juce::Justification::centredRight);
+    refreshFileLabels();
 
     // Presets
     presetBox.setTextWhenNothingSelected ("Preset");
@@ -307,10 +307,10 @@ PomanEditor::PomanEditor (PomanProcessor& p)
         if (index >= 0 && index != processor.getPresetManager().getCurrentIndex())
             processor.getPresetManager().loadPreset (index);
         refreshPresetBox();
-        refreshImpulseResponseLabel();
+        refreshFileLabels();
     };
-    previousPresetButton.onClick = [this] { processor.getPresetManager().loadPrevious(); refreshPresetBox(); refreshImpulseResponseLabel(); };
-    nextPresetButton.onClick = [this] { processor.getPresetManager().loadNext(); refreshPresetBox(); refreshImpulseResponseLabel(); };
+    previousPresetButton.onClick = [this] { processor.getPresetManager().loadPrevious(); refreshPresetBox(); refreshFileLabels(); };
+    nextPresetButton.onClick = [this] { processor.getPresetManager().loadNext(); refreshPresetBox(); refreshFileLabels(); };
     savePresetButton.onClick = [this] { showSavePresetDialog(); };
 
     for (auto* c : std::initializer_list<juce::Component*> { &presetBox, &previousPresetButton, &nextPresetButton, &savePresetButton })
@@ -437,6 +437,7 @@ void PomanEditor::timerCallback()
 
     refreshHarmonizerInfo();
     refreshModLabels();
+    refreshFileLabels();
 
     const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
     const float reduction = processor.getCompressorGainReductionDb();
@@ -466,7 +467,7 @@ void PomanEditor::timerCallback()
     if (processor.getPresetManager().getCurrentName() != shownPresetName)
     {
         refreshPresetBox();
-        refreshImpulseResponseLabel();
+        refreshFileLabels();
     }
 }
 
@@ -775,11 +776,67 @@ void PomanEditor::refreshHarmonizerInfo()
         harmInfoLabel.setText (text, juce::dontSendNotification);
 }
 
-void PomanEditor::refreshImpulseResponseLabel()
+void PomanEditor::chooseFile (PomanProcessor::FileSlot slot)
 {
-    const auto name = processor.getImpulseResponseName();
-    irLabel.setText (name.isEmpty() ? "Built-in 4x12 model" : name, juce::dontSendNotification);
-    clearIrButton.setToggleState (name.isEmpty(), juce::dontSendNotification);
+    const bool nam = slot == PomanProcessor::FileSlot::namModel;
+    fileChooser = std::make_unique<juce::FileChooser> (nam ? "Load a NAM capture" : "Load a cabinet impulse response",
+                                                       defaultFolder (nam ? "Models" : "IRs"), nam ? "*.nam" : "*.wav;*.aif;*.aiff");
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this, slot, nam] (const juce::FileChooser& chooser)
+                              {
+                                  const auto file = chooser.getResult();
+                                  if (! file.existsAsFile())
+                                      return;
+                                  const auto result = processor.loadFile (slot, file);
+                                  if (result.failed())
+                                      juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                                              nam ? "NAM capture" : "Impulse response", result.getErrorMessage());
+                                  else if (nam) // loading a capture means "play it"
+                                      ampModelBox.setSelectedId (PomanProcessor::namModelIndex() + 1, juce::sendNotificationSync);
+                                  refreshFileLabels();
+                              });
+}
+
+void PomanEditor::refreshFileLabels()
+{
+    using Slot = PomanProcessor::FileSlot;
+    const auto describe = [this] (Slot slot)
+    {
+        const auto name = processor.getFileName (slot);
+        if (name.isEmpty())
+            return juce::String();
+        return processor.isFileSlotLoaded (slot) ? name : name + " (missing)";
+    };
+
+    const auto a = describe (Slot::irA), b = describe (Slot::irB);
+    juce::String cabText = "Built-in 4x12 model";
+    if (a.isNotEmpty() && b.isNotEmpty())
+        cabText = "A: " + a + "   B: " + b + "   (aligned " + juce::String (processor.getCabAlignmentSamples()) + " smp)";
+    else if (a.isNotEmpty() || b.isNotEmpty())
+        cabText = (a.isNotEmpty() ? "A: " + a : "B: " + b);
+    if (irLabel.getText() != cabText)
+        irLabel.setText (cabText, juce::dontSendNotification);
+    builtInCabButton.setToggleState (a.isEmpty() && b.isEmpty(), juce::dontSendNotification);
+
+    // The capture's name, and the cost of resampling when the interface is not at the model's rate.
+    juce::String namText;
+    const bool namSelected = ampModelBox.getSelectedId() == PomanProcessor::namModelIndex() + 1;
+    const auto capture = describe (Slot::namModel);
+    if (capture.isNotEmpty())
+    {
+        namText = "NAM: " + capture;
+        const double hostRate = processor.getSampleRate(), modelRate = processor.getNamModelRate();
+        if (processor.isFileSlotLoaded (Slot::namModel) && hostRate > 0.0 && modelRate > 0.0 && std::abs (hostRate - modelRate) > 1.0)
+            namText << "   (" << juce::String (modelRate / 1000.0, 1) << " kHz model, +"
+                    << juce::String (1000.0 * processor.getNamResamplingLatency() / hostRate, 1) << " ms: set your interface to "
+                    << juce::String (modelRate / 1000.0, 0) << " kHz)";
+    }
+    else if (namSelected)
+    {
+        namText = "No capture loaded: press LOAD NAM (Glass Clean plays meanwhile)";
+    }
+    if (namLabel.getText() != namText)
+        namLabel.setText (namText, juce::dontSendNotification);
 }
 
 void PomanEditor::layoutKnobs (Section& section, juce::Rectangle<int> area)
@@ -911,7 +968,7 @@ void PomanEditor::resized()
     placeRow (ampRow, { ampSection }, { 1 });
     placeRow (eqRow, { eqSection }, { 1 });
     placeRow (harmRow, { harmonizerSection, modSection }, { 3, 2 });
-    placeRow (fxRow, { cabSection, delaySection, reverbSection }, { 3, 3, 2 });
+    placeRow (fxRow, { cabSection, delaySection, reverbSection }, { 4, 3, 2 });
 
     for (auto& s : sections)
     {
@@ -921,7 +978,12 @@ void PomanEditor::resized()
             s->power->setBounds (titleBar.removeFromLeft (sc (20)).withSizeKeepingCentre (sc (16), sc (16)).translated (0, sc (1)));
 
         if (s.get() == ampSection)
-            ampModelBox.setBounds (titleBar.removeFromRight (sc (240)).reduced (sc (2), sc (1)));
+        {
+            ampModelBox.setBounds (titleBar.removeFromRight (sc (200)).reduced (sc (2), sc (1)));
+            loadNamButton.setBounds (titleBar.removeFromRight (sc (92)).reduced (sc (2), sc (1)));
+            titleBar.removeFromLeft (sc (110)); // the section title
+            namLabel.setBounds (titleBar.reduced (sc (6), 0));
+        }
 
         if (s.get() == driveSection)
             driveTypeBox.setBounds (titleBar.removeFromRight (sc (130)).reduced (sc (2), sc (1)));
@@ -962,11 +1024,10 @@ void PomanEditor::resized()
 
         if (s.get() == cabSection)
         {
-            auto irArea = inner.removeFromRight (inner.getWidth() / 2).reduced (sc (6), sc (10));
-            auto buttons = irArea.removeFromTop (sc (30));
-            loadIrButton.setBounds (buttons.removeFromLeft (buttons.getWidth() / 2).reduced (sc (2), 0));
-            clearIrButton.setBounds (buttons.reduced (sc (2), 0));
-            irLabel.setBounds (irArea.removeFromTop (sc (36)));
+            builtInCabButton.setBounds (titleBar.removeFromRight (sc (70)).reduced (sc (2), sc (1)));
+            irBButton.setBounds (titleBar.removeFromRight (sc (50)).reduced (sc (2), sc (1)));
+            irAButton.setBounds (titleBar.removeFromRight (sc (50)).reduced (sc (2), sc (1)));
+            irLabel.setBounds (inner.removeFromTop (sc (16)));
         }
 
         layoutKnobs (*s, inner.withTrimmedTop (sc (14)));

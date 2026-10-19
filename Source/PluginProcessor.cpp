@@ -4,6 +4,19 @@
 namespace
 {
 const juce::Identifier irPathProperty { "impulseResponsePath" };
+const juce::Identifier irPathBProperty { "impulseResponsePathB" };
+const juce::Identifier namPathProperty { "namModelPath" };
+
+const juce::Identifier& slotProperty (PomanProcessor::FileSlot slot)
+{
+    switch (slot)
+    {
+        case PomanProcessor::FileSlot::irA:      return irPathProperty;
+        case PomanProcessor::FileSlot::irB:      return irPathBProperty;
+        case PomanProcessor::FileSlot::namModel: return namPathProperty;
+    }
+    return irPathProperty;
+}
 
 using Layout = juce::AudioProcessorValueTreeState::ParameterLayout;
 using juce::AudioParameterBool;
@@ -85,7 +98,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout PomanProcessor::createParame
     addFloat (layout, "odLevel", "Drive Level", { -12.0f, 12.0f, 0.1f }, 3.0f, "dB");
 
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "ampChannel", 1 }, "Amp Model",
-                                                        poman::AmpModel::modelNames(), 1));
+                                                        ampModelChoices(), 1));
     addKnob (layout, "ampGain", "Amp Gain", 6.0f);
     addKnob (layout, "ampBass", "Bass", 5.5f);
     addKnob (layout, "ampMid", "Mid", 4.0f);
@@ -96,6 +109,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout PomanProcessor::createParame
 
     addSwitch (layout, "cabOn", "Cab On", true);
     addFloat (layout, "cabMic", "Mic Position", { 0.0f, 1.0f, 0.001f }, 0.5f);
+    addFloat (layout, "cabMix", "Cab A/B Mix", { 0.0f, 1.0f, 0.001f }, 0.5f);
+    addFloat (layout, "cabLowCut", "Cab Low Cut", { 20.0f, 300.0f, 1.0f, 0.5f }, 20.0f, "Hz");
+    addFloat (layout, "cabHighCut", "Cab High Cut", { 2000.0f, 20000.0f, 10.0f, 0.4f }, 20000.0f, "Hz");
 
     addSwitch (layout, "eqOn", "EQ On", false);
     {
@@ -146,7 +162,7 @@ PomanProcessor::PomanProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PomanState", createParameterLayout())
 {
-    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "compOn", "compSustain", "compAttack", "compLevel", "compBlend", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "eqOn", "eq31", "eq63", "eq125", "eq250", "eq500", "eq1k", "eq2k", "eq4k", "eq8k", "eq16k", "eqLowCut", "eqHighCut", "eqLevel", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "modOn", "modType", "modRate", "modDepth", "modMix", "modFeedback", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "dlySync", "revOn", "revSize", "revMix" };
+    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "compOn", "compSustain", "compAttack", "compLevel", "compBlend", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "cabMix", "cabLowCut", "cabHighCut", "eqOn", "eq31", "eq63", "eq125", "eq250", "eq500", "eq1k", "eq2k", "eq4k", "eq8k", "eq16k", "eqLowCut", "eqHighCut", "eqLevel", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "modOn", "modType", "modRate", "modDepth", "modMix", "modFeedback", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "dlySync", "revOn", "revSize", "revMix" };
     static_assert (std::size (ids) == (size_t) Param::count);
 
     for (size_t i = 0; i < rawParameters.size(); ++i)
@@ -182,6 +198,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     octaver.prepare (sampleRate);
     overdrive.prepare (sampleRate, maxChunkSize);
     amp.prepare (sampleRate, maxChunkSize);
+    namAmp.prepare (sampleRate, maxChunkSize);
     cab.prepare (sampleRate, maxChunkSize);
     delay.prepare (sampleRate, maxChunkSize);
     reverb.prepare (sampleRate, maxChunkSize);
@@ -198,7 +215,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (param (Param::output)));
 
     updateParameters();
-    setLatencySamples (amp.getLatencySamples() + overdrive.getLatencySamples()); // both oversamplers are always in the path
+    updateLatency();
 }
 
 void PomanProcessor::updateParameters()
@@ -212,7 +229,9 @@ void PomanProcessor::updateParameters()
                          param (Param::odDrive), param (Param::odTone), param (Param::odLevel));
 
     poman::AmpParams ampParams;
-    ampParams.channel = (int) param (Param::ampChannel);
+    // With NAM selected but no capture loaded, the built-in Glass Clean stands in.
+    const int channel = juce::roundToInt (param (Param::ampChannel));
+    ampParams.channel = channel >= namModelIndex() ? 0 : channel;
     ampParams.gain = param (Param::ampGain);
     ampParams.bass = param (Param::ampBass);
     ampParams.mid = param (Param::ampMid);
@@ -221,8 +240,11 @@ void PomanProcessor::updateParameters()
     ampParams.depth = param (Param::ampDepth);
     ampParams.master = param (Param::ampMaster);
     amp.setParams (ampParams);
+    namAmp.setParams (ampParams);
 
     cab.setMic (param (Param::cabMic));
+    cab.setMix (param (Param::cabMix));
+    cab.setCuts (param (Param::cabLowCut), param (Param::cabHighCut));
     graphicEq.setSettings (getEqSettings());
 
     poman::Harmonizer::Params harmParams;
@@ -330,7 +352,12 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
         overdrive.process (mono, numSamples);
 
     juce::dsp::AudioBlock<float> monoBlock (monoBuffer.getArrayOfWritePointers(), 1, 0, (size_t) numSamples);
-    amp.process (monoBlock);
+    const bool useNam = juce::roundToInt (param (Param::ampChannel)) == namModelIndex() && namAmp.isLoaded();
+    if (useNam)
+        namAmp.process (monoBlock);
+    else
+        amp.process (monoBlock);
+    pathDelay.process (mono, numSamples, useNam ? namPathPad.load() : ampPathPad.load());
 
     if (enabled (Param::cabOn))
         cab.process (monoBlock);
@@ -389,20 +416,57 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
     storePeak (outputPeak, juce::jmax (blockPeak (left, numSamples), blockPeak (right, numSamples)));
 }
 
-void PomanProcessor::loadImpulseResponse (const juce::File& file)
+juce::StringArray PomanProcessor::ampModelChoices()
 {
-    if (! file.existsAsFile())
-        return;
-
-    cab.loadImpulseResponse (file);
-
-    // Standalone keeps IRs inside the portable folder relative, so the folder can move between machines.
-    const auto root = poman::portableRoot();
-    const bool portable = wrapperType == wrapperType_Standalone && file.isAChildOf (root);
-    apvts.state.setProperty (irPathProperty, portable ? file.getRelativePathFrom (root) : file.getFullPathName(), nullptr);
+    auto names = poman::AmpModel::modelNames();
+    names.add ("NAM Capture");
+    return names;
 }
 
-juce::File PomanProcessor::resolveImpulseResponsePath (const juce::String& path) const
+juce::Result PomanProcessor::loadFile (FileSlot slot, const juce::File& file)
+{
+    if (! file.existsAsFile())
+        return juce::Result::fail ("File not found: " + file.getFullPathName());
+
+    const auto result = slot == FileSlot::namModel ? namAmp.load (file)
+                                                   : cab.loadImpulseResponse (slot == FileSlot::irA ? 0 : 1, file);
+    if (result.failed())
+        return result;
+
+    // Standalone keeps files inside the portable folder relative, so the folder can move between machines.
+    const auto root = poman::portableRoot();
+    const bool portable = wrapperType == wrapperType_Standalone && file.isAChildOf (root);
+    apvts.state.setProperty (slotProperty (slot), portable ? file.getRelativePathFrom (root) : file.getFullPathName(), nullptr);
+    loadedPaths[(size_t) slot] = file.getFullPathName();
+    if (slot == FileSlot::namModel)
+        updateLatency();
+    return result;
+}
+
+void PomanProcessor::clearFile (FileSlot slot)
+{
+    if (slot == FileSlot::namModel)
+        namAmp.unload();
+    else
+        cab.clearImpulseResponse (slot == FileSlot::irA ? 0 : 1);
+    apvts.state.removeProperty (slotProperty (slot), nullptr);
+    loadedPaths[(size_t) slot].clear();
+    if (slot == FileSlot::namModel)
+        updateLatency();
+}
+
+juce::String PomanProcessor::getFileName (FileSlot slot) const
+{
+    const auto path = apvts.state.getProperty (slotProperty (slot)).toString();
+    return path.isEmpty() ? juce::String() : resolveStoredPath (path).getFileNameWithoutExtension();
+}
+
+bool PomanProcessor::isFileSlotLoaded (FileSlot slot) const
+{
+    return slot == FileSlot::namModel ? namAmp.isLoaded() : cab.hasImpulseResponse (slot == FileSlot::irA ? 0 : 1);
+}
+
+juce::File PomanProcessor::resolveStoredPath (const juce::String& path) const
 {
     if (path.isEmpty())
         return {};
@@ -410,16 +474,42 @@ juce::File PomanProcessor::resolveImpulseResponsePath (const juce::String& path)
     return juce::File::isAbsolutePath (path) ? juce::File (path) : poman::portableRoot().getChildFile (path);
 }
 
-void PomanProcessor::clearImpulseResponse()
+// Brings the engines in line with the paths in the state. Unchanged files are not reloaded, so
+// switching presets that share a capture is instant.
+void PomanProcessor::restoreFiles()
 {
-    cab.clearImpulseResponse();
-    apvts.state.removeProperty (irPathProperty, nullptr);
+    for (auto slot : { FileSlot::irA, FileSlot::irB, FileSlot::namModel })
+    {
+        const auto file = resolveStoredPath (apvts.state.getProperty (slotProperty (slot)).toString());
+        auto& loaded = loadedPaths[(size_t) slot];
+        if (file.existsAsFile())
+        {
+            if (loaded == file.getFullPathName())
+                continue;
+            const auto result = slot == FileSlot::namModel ? namAmp.load (file)
+                                                           : cab.loadImpulseResponse (slot == FileSlot::irA ? 0 : 1, file);
+            loaded = result.wasOk() ? file.getFullPathName() : juce::String();
+        }
+        else if (loaded.isNotEmpty() || isFileSlotLoaded (slot))
+        {
+            if (slot == FileSlot::namModel)
+                namAmp.unload();
+            else
+                cab.clearImpulseResponse (slot == FileSlot::irA ? 0 : 1);
+            loaded.clear();
+        }
+    }
+    updateLatency();
 }
 
-juce::String PomanProcessor::getImpulseResponseName() const
+void PomanProcessor::updateLatency()
 {
-    const auto path = apvts.state.getProperty (irPathProperty).toString();
-    return resolveImpulseResponsePath (path).getFileName();
+    const int ampLatency = amp.getLatencySamples();
+    const int namLatency = namAmp.isLoaded() ? namAmp.getLatencySamples() : 0;
+    const int pathLatency = juce::jmax (ampLatency, namLatency);
+    ampPathPad.store (pathLatency - ampLatency);
+    namPathPad.store (pathLatency - namLatency);
+    setLatencySamples (pathLatency + overdrive.getLatencySamples()); // the drive oversampler is always in the path
 }
 
 void PomanProcessor::getStateInformation (juce::MemoryBlock& destData)
@@ -462,12 +552,7 @@ void PomanProcessor::setStateInformation (const void* data, int sizeInBytes)
 void PomanProcessor::applyState (const juce::ValueTree& state)
 {
     apvts.replaceState (state.createCopy());
-
-    const auto file = resolveImpulseResponsePath (apvts.state.getProperty (irPathProperty).toString());
-    if (file.existsAsFile())
-        cab.loadImpulseResponse (file);
-    else
-        cab.clearImpulseResponse();
+    restoreFiles();
 }
 
 juce::AudioProcessorEditor* PomanProcessor::createEditor()

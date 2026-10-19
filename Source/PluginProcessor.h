@@ -11,6 +11,7 @@
 #include "dsp/DrumMachine.h"
 #include "dsp/GraphicEQ.h"
 #include "dsp/Harmonizer.h"
+#include "dsp/NamAmp.h"
 #include "dsp/Modulation.h"
 #include "dsp/NoiseGate.h"
 #include "dsp/Octaver.h"
@@ -49,9 +50,20 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    void loadImpulseResponse (const juce::File& file);
-    void clearImpulseResponse();
-    juce::String getImpulseResponseName() const;
+    // Files the rig depends on. Paths live in the state (relative inside the portable folder), so
+    // sessions and user presets restore them; a missing file leaves the slot empty but remembered.
+    enum class FileSlot { irA, irB, namModel };
+    juce::Result loadFile (FileSlot slot, const juce::File& file); // message thread
+    void clearFile (FileSlot slot);                                // message thread
+    juce::String getFileName (FileSlot slot) const;                // empty when nothing is set
+    bool isFileSlotLoaded (FileSlot slot) const;
+
+    // AMPLIFIER choices: the built-in models followed by the NAM capture slot.
+    static juce::StringArray ampModelChoices();
+    static int namModelIndex() { return poman::AmpModel::modelNames().size(); }
+    double getNamModelRate() const { return namAmp.getModelSampleRate(); }
+    int getNamResamplingLatency() const { return namAmp.getLatencySamples(); }
+    int getCabAlignmentSamples() const { return cab.getAlignmentSamples(); }
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -89,11 +101,14 @@ public:
 
 private:
     void updateParameters();
-    juce::File resolveImpulseResponsePath (const juce::String& path) const;
+    juce::File resolveStoredPath (const juce::String& path) const;
+    void restoreFiles();
+    void updateLatency();
+    std::array<juce::String, 3> loadedPaths; // per FileSlot: what the engines currently hold
     void processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
     enum class Param
     {
-        input, output, gateOn, gateThreshold, compOn, compSustain, compAttack, compLevel, compBlend, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, eqOn, eq31, eq63, eq125, eq250, eq500, eq1k, eq2k, eq4k, eq8k, eq16k, eqLowCut, eqHighCut, eqLevel, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, modOn, modType, modRate, modDepth, modMix, modFeedback, dlyOn, dlyTime, dlyFeedback, dlyMix, dlySync, revOn, revSize, revMix,
+        input, output, gateOn, gateThreshold, compOn, compSustain, compAttack, compLevel, compBlend, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, cabMix, cabLowCut, cabHighCut, eqOn, eq31, eq63, eq125, eq250, eq500, eq1k, eq2k, eq4k, eq8k, eq16k, eqLowCut, eqHighCut, eqLevel, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, modOn, modType, modRate, modDepth, modMix, modFeedback, dlyOn, dlyTime, dlyFeedback, dlyMix, dlySync, revOn, revSize, revMix,
         count
     };
 
@@ -110,6 +125,24 @@ private:
     poman::CabSim cab;
     poman::GraphicEQ graphicEq;
     poman::DrumMachine drums;
+    poman::NamAmp namAmp;
+    // The built-in amp and the NAM path differ in latency; the shorter one is padded so the
+    // reported latency stays the same whichever amp is selected.
+    struct PathDelay
+    {
+        std::array<float, 8192> line {};
+        int write = 0;
+        void process (float* x, int n, int delay) noexcept
+        {
+            for (int i = 0; i < n; ++i)
+            {
+                line[(size_t) write] = x[i];
+                x[i] = line[(size_t) ((write - delay) & 8191)];
+                write = (write + 1) & 8191;
+            }
+        }
+    } pathDelay;
+    std::atomic<int> ampPathPad { 0 }, namPathPad { 0 };
     poman::Harmonizer harmonizer;
     poman::Modulation modulation;
     poman::PingPongDelay delay;

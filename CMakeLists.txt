@@ -1,6 +1,6 @@
 ﻿cmake_minimum_required(VERSION 3.22)
 
-project(POMAN VERSION 0.10.0 LANGUAGES C CXX)
+project(POMAN VERSION 0.11.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -36,7 +36,8 @@ target_sources(POMAN PRIVATE
     Source/PresetManager.cpp
     Source/recorder/MultitrackRecorder.cpp
     Source/StudioView.cpp
-    Source/DrumView.cpp)
+    Source/DrumView.cpp
+    Source/dsp/NamAmp.cpp)
 
 target_include_directories(POMAN PRIVATE Source)
 
@@ -51,6 +52,7 @@ target_compile_definitions(POMAN PUBLIC
 
 target_link_libraries(POMAN
     PRIVATE
+        nam_core
         juce::juce_audio_utils
         juce::juce_dsp
     PUBLIC
@@ -68,7 +70,7 @@ target_link_libraries(POMANTests PRIVATE juce::juce_audio_basics PUBLIC juce::ju
 juce_add_console_app(POMANDspTests PRODUCT_NAME "POMANDspTests")
 target_sources(POMANDspTests PRIVATE Tests/DspTest.cpp)
 target_include_directories(POMANDspTests PRIVATE Source)
-target_compile_definitions(POMANDspTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_compile_definitions(POMANDspTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 POMAN_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(POMANDspTests PRIVATE juce::juce_dsp juce::juce_data_structures PUBLIC juce::juce_recommended_config_flags)
 
 juce_add_console_app(POMANRecorderTests PRODUCT_NAME "POMANRecorderTests")
@@ -90,3 +92,30 @@ target_sources(POMANBench PRIVATE Tests/Bench.cpp)
 target_include_directories(POMANBench PRIVATE Source)
 target_compile_definitions(POMANBench PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(POMANBench PRIVATE juce::juce_dsp juce::juce_data_structures PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags)
+
+# Neural Amp Modeler core (MIT): external/NeuralAmpModelerCore, tag v0.6.0 with submodules (Eigen, nlohmann/json).
+set(NAM_CORE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external/NeuralAmpModelerCore")
+file(GLOB NAM_CORE_SOURCES "${NAM_CORE_DIR}/NAM/*.cpp" "${NAM_CORE_DIR}/NAM/*/*.cpp")
+# OBJECT, not STATIC: each architecture registers itself from a static initializer, and a static
+# library would let the linker drop those (unreferenced) object files.
+add_library(nam_core OBJECT ${NAM_CORE_SOURCES})
+target_include_directories(nam_core PUBLIC "${NAM_CORE_DIR}" "${NAM_CORE_DIR}/NAM")
+target_include_directories(nam_core SYSTEM PUBLIC "${NAM_CORE_DIR}/Dependencies/eigen" "${NAM_CORE_DIR}/Dependencies/nlohmann")
+# float samples end to end; NOMINMAX keeps windows.h macros away from Eigen.
+target_compile_definitions(nam_core PUBLIC NAM_SAMPLE_FLOAT NAM_ENABLE_A2_FAST NOMINMAX)
+if (MSVC)
+    target_compile_options(nam_core PRIVATE /bigobj /W0)
+endif()
+
+juce_add_console_app(POMANNamTests PRODUCT_NAME "POMANNamTests")
+target_sources(POMANNamTests PRIVATE Tests/NamTest.cpp Source/dsp/NamAmp.cpp)
+target_include_directories(POMANNamTests PRIVATE Source)
+target_compile_definitions(POMANNamTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(POMANNamTests PRIVATE nam_core juce::juce_dsp PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags)
+
+# Generates the bundled (synthetic) cabinet IRs: POMANIrGen portable/POMAN-Portable/IRs
+juce_add_console_app(POMANIrGen PRODUCT_NAME "POMANIrGen")
+target_sources(POMANIrGen PRIVATE Tools/IrGen.cpp)
+target_include_directories(POMANIrGen PRIVATE Source)
+target_compile_definitions(POMANIrGen PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(POMANIrGen PRIVATE juce::juce_dsp juce::juce_audio_formats PUBLIC juce::juce_recommended_config_flags)

@@ -90,7 +90,8 @@ private:
     Section& addSection (const juce::String& title, juce::Colour accent, const juce::String& powerParamId,
                          std::initializer_list<Knob*> knobs);
     void layoutKnobs (Section&, juce::Rectangle<int> area);
-    void refreshImpulseResponseLabel();
+    void refreshFileLabels();
+    void chooseFile (PomanProcessor::FileSlot slot);
     void refreshPresetBox();
     void showSavePresetDialog();
     void setTunerVisible (bool visible);
@@ -154,8 +155,8 @@ private:
     bool shownDiatonic = true;
     int shownScale = -1;
 
-    juce::TextButton loadIrButton { "LOAD IR" }, clearIrButton { "BUILT-IN" };
-    juce::Label irLabel;
+    juce::TextButton irAButton { "IR A" }, irBButton { "IR B" }, builtInCabButton { "BUILT-IN" }, loadNamButton { "LOAD NAM" };
+    juce::Label irLabel, namLabel;
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     juce::ComboBox presetBox;

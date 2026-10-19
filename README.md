@@ -18,7 +18,12 @@ Input → [Afinador] → Gate → Comp → Submerge (octavador) → Drive (5 tip
 - **POMAN Amplifier** (10 modelos): Glass Clean, Modern Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch,
   Hot Rod Lead, Hi-Gain Rect, Tight Djent y Lead 51 (alta ganancia estilo 5150, 5 etapas). Cada modelo define etapas de preamp (2-4), filtros de acoplo,
   stack de tonos propio (frecuencias y voz de medios), sag y presencia. Las etapas no lineales van a 4x oversampling.
-- **Hull**: modelo de cabina por filtros, con un control de posición del micrófono, o carga de un IR propio en `.wav`/`.aif`.
+- **NAM Capture**: carga capturas de [Neural Amp Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore) (`.nam`, WaveNet/LSTM/A2)
+  como amplificador. Se cargan y precalientan en el hilo de la interfaz y se intercambian con un try-lock; corren a su
+  frecuencia de entrenamiento con remuestreo sinc (≈207 muestras de latencia a 44,1 kHz, 0 a 48 kHz) y se normalizan a
+  -18 dB cuando publican su sonoridad. La latencia reportada es constante: el camino más corto se retrasa.
+- **Cabinet**: dos IR (A/B) con mezcla de potencia constante y alineación de fase automática por correlación cruzada,
+  low/high cut, o el modelo 4x12 integrado. Incluye 4 IR sintéticos generados por `Tools/IrGen.cpp`.
 
 - **Harmonizer**: 2 voces panoramizadas. En modo *Diatonic* sigue el tono de la señal DI limpia (YIN)
   y calcula cada intervalo por grados de la escala elegida (8 escalas, 12 tonalidades); en *Chromatic* usa
@@ -61,6 +66,7 @@ bloques de audio: suena idéntico con cualquier tamaño de buffer, tras un salto
 
 ```bash
 git clone --depth 1 --branch 8.0.15 https://github.com/juce-framework/JUCE.git external/JUCE
+git clone --depth 1 --branch v0.6.0 --recurse-submodules --shallow-submodules https://github.com/sdatkinson/NeuralAmpModelerCore.git external/NeuralAmpModelerCore
 cmake -S . -B build -G "Visual Studio 18 2026" -A x64
 cmake --build build --config Release --parallel
 ```
@@ -77,9 +83,12 @@ build/POMANTests_artefacts/Release/POMANTests.exe        # precisión del afinad
 build/POMANDspTests_artefacts/Release/POMANDspTests.exe  # amps/drives, harmonizer, EQ, mod y caja de ritmos
 build/POMANDrumAnalysis_artefacts/Release/POMANDrumAnalysis.exe previews/drums  # mide cada voz y genera WAV
 build/POMANBench_artefacts/Release/POMANBench.exe            # CPU y aliasing por módulo
+build/POMANNamTests_artefacts/Release/POMANNamTests.exe external/NeuralAmpModelerCore/example_models  # NAM
 python Tests/check_presets.py                                 # IDs de los presets de fábrica
 build/POMANRecorderTests_artefacts/Release/POMANRecorderTests.exe  # grabación, latencia, mute/solo, overdub, export, metrónomo, cuenta atrás, sesiones
 ```
+
+Licencias de terceros: ver [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Estructura
 

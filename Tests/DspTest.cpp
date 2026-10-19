@@ -1,5 +1,7 @@
 ﻿// Offline render of every amp model and drive type: checks for NaN/silence/runaway levels
 // and prints RMS so the models can be level-matched.
+#include "dsp/CabSim.h"
+#include "dsp/Resampler.h"
 #include "dsp/Tempo.h"
 #include "dsp/Compressor.h"
 #include "dsp/AmpModel.h"
@@ -56,6 +58,7 @@ bool check (const char* label, const Stats& s)
 
 int main()
 {
+    std::setvbuf (stdout, nullptr, _IONBF, 0); // unbuffered: progress survives a crash
     constexpr double sampleRate = 48000.0;
     constexpr int blockSize = 128;
     const auto input = makePluck (sampleRate, (int) sampleRate * 2);
@@ -507,6 +510,172 @@ int main()
             failures += ok ? 0 : 1;
             std::printf ("%s  %-24s -21 dB peak -> +12 dB, -3 dB -> -6 dB, clamps at +24\n", ok ? "PASS" : "FAIL", "input calibration");
         }
+    }
+
+    std::printf ("-- Resampler (44.1 kHz host, 48 kHz inner, identity) --\n");
+    {
+        // Level error and residual (everything that is not the delayed sine) per frequency.
+        const auto measure = [&] (auto& rs, double hz, float& gainDb, float& residualDb)
+        {
+            constexpr double host = 44100.0;
+            rs.prepare (host, 48000.0, 256);
+            const int n = 65536, latency = rs.getLatencySamples();
+            std::vector<float> x ((size_t) n);
+            for (int i = 0; i < n; ++i)
+                x[(size_t) i] = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * hz * i / host);
+            auto y = x;
+            for (int pos = 0; pos < n; pos += 256)
+                rs.process (y.data() + pos, juce::jmin (256, n - pos), [] (float*, int) {});
+            // Least-squares fit of y against sin/cos at hz (absorbs any sub-sample delay), over the tail.
+            double ss = 0, cc = 0, sc = 0, ys = 0, yc = 0, yy = 0;
+            for (int i = n / 2; i < n; ++i)
+            {
+                const double s = std::sin (juce::MathConstants<double>::twoPi * hz * i / host), c = std::cos (juce::MathConstants<double>::twoPi * hz * i / host);
+                ss += s * s, cc += c * c, sc += s * c, ys += y[(size_t) i] * s, yc += y[(size_t) i] * c, yy += (double) y[(size_t) i] * y[(size_t) i];
+            }
+            const double det = ss * cc - sc * sc, a = (ys * cc - yc * sc) / det, b = (yc * ss - ys * sc) / det;
+            const double fitted = a * a * ss + b * b * cc + 2 * a * b * sc;
+            gainDb = (float) (20.0 * std::log10 (std::sqrt (a * a + b * b) / 0.5));
+            residualDb = (float) (10.0 * std::log10 (juce::jmax (1.0e-20, yy - fitted) / fitted));
+            return latency;
+        };
+
+        for (int kind = 0; kind < 2; ++kind)
+        {
+            float worstGain = 0.0f, worstResidual = -200.0f;
+            int latency = 0;
+            juce::String detail;
+            for (double hz : { 1000.0, 5000.0, 10000.0, 15000.0 })
+            {
+                float g = 0.0f, r = 0.0f;
+                if (kind == 0)
+                {
+                    poman::ResampledProcess<juce::LagrangeInterpolator> rs;
+                    latency = measure (rs, hz, g, r);
+                }
+                else
+                {
+                    poman::ResampledProcess<juce::WindowedSincInterpolator> rs;
+                    latency = measure (rs, hz, g, r);
+                }
+                worstGain = std::max (worstGain, std::abs (g));
+                worstResidual = std::max (worstResidual, r);
+                detail << juce::String ((int) (hz / 1000)) << "k: " << juce::String (g, 2) << " dB/" << juce::String (r, 0) << " dB  ";
+            }
+            std::printf ("      %-14s latency %3d samples | %s\n", kind == 0 ? "Lagrange" : "WindowedSinc", latency, detail.toRawUTF8());
+            if (kind == 1)
+            {
+                // The NAM path uses the windowed sinc: Lagrange is only clean to ~5 kHz (see line above).
+                const bool ok = worstGain < 0.3f && worstResidual < -80.0f && latency < 260;
+                failures += ok ? 0 : 1;
+                std::printf ("%s  %-24s 1-15 kHz: level within %.2f dB, residual %.0f dB, latency %d samples\n",
+                             ok ? "PASS" : "FAIL", "resampler (sinc)", worstGain, worstResidual, latency);
+            }
+        }
+    }
+
+    std::printf ("-- Dual-IR cabinet --\n");
+    {
+        // Uses the bundled 4x12 IR as slot A and a copy delayed by 23 samples (a mic ~16 cm further) as B.
+        const auto irA = juce::File (POMAN_SOURCE_DIR).getChildFile ("portable/POMAN-Portable/IRs/POMAN 4x12 Modern.wav");
+        const auto irB = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("poman_ir_b.wav");
+        constexpr int lag = 23;
+        {
+            juce::AudioFormatManager fm;
+            fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (irA));
+            juce::AudioBuffer<float> a (1, (int) reader->lengthInSamples), b (1, (int) reader->lengthInSamples + lag);
+            reader->read (&a, 0, a.getNumSamples(), 0, true, false);
+            b.clear();
+            b.copyFrom (0, lag, a, 0, 0, a.getNumSamples());
+            irB.deleteFile();
+            std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (irB);
+            juce::WavAudioFormat wav;
+            auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions{}.withSampleRate (reader->sampleRate).withNumChannels (1).withBitsPerSample (24));
+            writer->writeFromAudioSampleBuffer (b, 0, b.getNumSamples());
+        }
+
+        // The convolver swaps a new IR in on its own thread, then crossfades: feed silence until settled.
+        const auto settle = [&] (poman::CabSim& cab)
+        {
+            std::vector<float> silence (256, 0.0f);
+            for (int i = 0; i < 40; ++i)
+            {
+                juce::Thread::sleep (10);
+                std::fill (silence.begin(), silence.end(), 0.0f);
+                float* ch[] { silence.data() };
+                juce::dsp::AudioBlock<float> blk (ch, 1, 256);
+                cab.process (blk);
+            }
+        };
+        const auto impulseResponse = [&] (poman::CabSim& cab)
+        {
+            std::vector<float> y (4096, 0.0f);
+            y[0] = 1.0f;
+            for (int pos = 0; pos < 4096; pos += 256)
+            {
+                float* ch[] { y.data() + pos };
+                juce::dsp::AudioBlock<float> blk (ch, 1, 256);
+                cab.process (blk);
+            }
+            return y;
+        };
+        const auto peakOf = [] (const std::vector<float>& y)
+        {
+            float p = 0.0f;
+            for (auto v : y)
+                p = std::max (p, std::abs (v));
+            return p;
+        };
+
+        poman::CabSim single;
+        single.prepare (sampleRate, 256);
+        const bool loadA = single.loadImpulseResponse (0, irA).wasOk();
+        settle (single);
+        const float singlePeak = peakOf (impulseResponse (single));
+
+        poman::CabSim dual;
+        dual.prepare (sampleRate, 256);
+        dual.setMix (0.5f);
+        const bool loadBoth = dual.loadImpulseResponse (0, irA).wasOk() && dual.loadImpulseResponse (1, irB).wasOk();
+        settle (dual);
+        const int alignment = dual.getAlignmentSamples();
+        const float dualPeak = peakOf (impulseResponse (dual));
+
+        // Equal-power mix of two aligned, identical IRs sums coherently: cos45 + sin45 = 1.414x.
+        const float ratio = dualPeak / singlePeak;
+        const bool ok = loadA && loadBoth && alignment == lag && singlePeak > 0.05f && ratio > 1.35f && ratio < 1.45f;
+        failures += ok ? 0 : 1;
+        std::printf ("%s  %-24s detected lag %d (want %d), A+B peak / A peak = %.3f (want 1.414)\n", ok ? "PASS" : "FAIL",
+                     "IR alignment and blend", alignment, lag, ratio);
+
+        // Low cut on the cab section.
+        poman::CabSim cut;
+        cut.prepare (sampleRate, 256);
+        cut.setCuts (300.0f, 20000.0f);
+        const auto toneThrough = [&] (poman::CabSim& cab, double hz)
+        {
+            std::vector<float> x (48000);
+            for (int i = 0; i < 48000; ++i)
+                x[(size_t) i] = 0.3f * (float) std::sin (juce::MathConstants<double>::twoPi * hz * i / sampleRate);
+            for (int pos = 0; pos < 48000; pos += 256)
+            {
+                float* ch[] { x.data() + pos };
+                juce::dsp::AudioBlock<float> blk (ch, 1, (size_t) juce::jmin (256, 48000 - pos)); // last block is partial
+                cab.process (blk);
+            }
+            float p = 0.0f;
+            for (int i = 24000; i < 48000; ++i)
+                p = std::max (p, std::abs (x[(size_t) i]));
+            return juce::Decibels::gainToDecibels (p);
+        };
+        poman::CabSim plain;
+        plain.prepare (sampleRate, 256);
+        const float drop = toneThrough (plain, 60.0) - toneThrough (cut, 60.0);
+        const bool cutOk = drop > 20.0f;
+        failures += cutOk ? 0 : 1;
+        std::printf ("%s  %-24s 60 Hz down %.1f dB with LOW CUT at 300 Hz\n", cutOk ? "PASS" : "FAIL", "cab low cut", drop);
+        irB.deleteFile();
     }
 
     std::printf ("-- Modulation --\n");

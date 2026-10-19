@@ -1,8 +1,23 @@
-POMAN - Guitar Amp Suite (version portable 0.10.0)
+POMAN - Guitar Amp Suite (version portable 0.11.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.11.0
+- Capturas NAM (Neural Amp Modeler): pulsa LOAD NAM en AMPLIFIER y elige
+  un archivo .nam (hay miles gratis, por ejemplo en tone3000.com). El
+  selector pasa a "NAM Capture". GAIN empuja la captura, BASS..DEPTH son
+  un ecualizador posterior y MASTER es el volumen. Guarda tus .nam en la
+  carpeta Models para tenerlos a mano (y que viajen con el portable).
+  * Las capturas se entrenan a 48 kHz: pon tu interfaz a 48 kHz para no
+    anadir latencia (a 44.1 kHz POMAN convierte y suma ~4.7 ms; lo indica
+    junto al nombre de la captura).
+- Cabina doble: IR A e IR B (por ejemplo dos microfonos) con A/B MIX. El
+  segundo IR se alinea en fase automaticamente al cargarlo. LOW CUT y HIGH
+  CUT de cabina. BUILT-IN vuelve al modelo 4x12 integrado.
+- 4 IRs propios incluidos en IRs\: POMAN 4x12 Modern, 4x12 Vintage, 2x12
+  Open Back y 1x12 Combo (respuestas sinteticas disenadas para POMAN).
 
 Novedades 0.10.0
 - Sonido mas limpio en distorsion alta: los pedales de drive procesan a 16x
@@ -112,6 +127,7 @@ Novedades 0.2.0
 Carpetas
 - Presets\  tus presets (.poman). Puedes copiarlos entre equipos.
 - Recordings\  tus grabaciones (WAV), una carpeta por sesion.
+- Models\  tus capturas NAM (.nam).
 - IRs\      tus impulsos de cabina (.wav / .aif). Los IR cargados desde aqui
             se guardan con ruta relativa y siguen funcionando si mueves la
             carpeta.

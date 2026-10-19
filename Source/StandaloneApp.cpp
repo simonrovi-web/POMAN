@@ -46,6 +46,9 @@ void useSmallestStableBuffer (juce::AudioDeviceManager& deviceManager)
 
     auto setup = deviceManager.getAudioDeviceSetup();
     setup.bufferSize = chosen;
+    // NAM captures are trained at 48 kHz: running there avoids resampling and its latency.
+    if (device->getAvailableSampleRates().contains (48000.0))
+        setup.sampleRate = 48000.0;
     deviceManager.setAudioDeviceSetup (setup, true);
 }
 
