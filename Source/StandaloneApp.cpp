@@ -10,6 +10,7 @@
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 
 #include "PortablePaths.h"
+#include "PluginProcessor.h"
 
 namespace
 {
@@ -102,7 +103,7 @@ void preferLowLatencyDevice (juce::AudioDeviceManager& deviceManager)
 }
 } // namespace
 
-class PomanStandaloneApp final : public juce::JUCEApplication
+class PomanStandaloneApp final : public juce::JUCEApplication, private juce::Timer
 {
 public:
     const juce::String getApplicationName() override { return JucePlugin_Name; }
@@ -129,11 +130,27 @@ public:
             juce::LookAndFeel::getDefaultLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId),
             std::move (holder));
         mainWindow->setVisible (true);
+        startTimer (500);
 
         // Dev aid: POMAN.exe --snapshot=out.png renders the editor to a PNG and quits.
-        const auto snapshotPath = commandLine.fromFirstOccurrenceOf ("--snapshot=", false, false).unquoted();
+        const auto snapshotPath = commandLine.fromFirstOccurrenceOf ("--snapshot=", false, false).upToFirstOccurrenceOf (" --", false, false).unquoted();
         if (snapshotPath.isNotEmpty())
         {
+            // --studio switches to the STUDIO page first (finds the page button by its text).
+            if (commandLine.contains ("--studio"))
+                juce::Timer::callAfterDelay (800, [this]
+                {
+                    std::function<void (juce::Component&)> clickStudio = [&clickStudio] (juce::Component& c)
+                    {
+                        if (auto* b = dynamic_cast<juce::Button*> (&c); b != nullptr && b->getButtonText() == "STUDIO")
+                            b->triggerClick();
+                        for (auto* child : c.getChildren())
+                            clickStudio (*child);
+                    };
+                    if (mainWindow != nullptr)
+                        clickStudio (*mainWindow);
+                });
+
             juce::Timer::callAfterDelay (1500, [this, snapshotPath]
             {
                 if (auto* content = mainWindow->getContentComponent())
@@ -151,6 +168,7 @@ public:
 
     void shutdown() override
     {
+        stopTimer();
         mainWindow = nullptr;
         if (settings != nullptr)
             settings->saveIfNeeded();
@@ -177,6 +195,20 @@ public:
     }
 
 private:
+    // Recorded takes are shifted back by the full round trip so they line up with what was heard.
+    void timerCallback() override
+    {
+        if (mainWindow == nullptr)
+            return;
+
+        auto* processor = dynamic_cast<PomanProcessor*> (mainWindow->getAudioProcessor());
+        auto* device = mainWindow->getDeviceManager().getCurrentAudioDevice();
+        if (processor != nullptr && device != nullptr)
+            processor->getRecorder().setLatencyCompensation (device->getInputLatencyInSamples()
+                                                             + device->getOutputLatencyInSamples()
+                                                             + processor->getLatencySamples());
+    }
+
     std::unique_ptr<juce::PropertiesFile> settings;
     std::unique_ptr<juce::StandaloneFilterWindow> mainWindow;
 };

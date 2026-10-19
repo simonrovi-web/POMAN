@@ -1,21 +1,8 @@
 #include "PluginEditor.h"
+#include "Palette.h"
 
 #include <numeric>
 
-namespace palette
-{
-const juce::Colour abyss { 0xff070b10 };
-const juce::Colour trench { 0xff0f171f };
-const juce::Colour panel { 0xff15202a };
-const juce::Colour panelEdge { 0xff22313d };
-const juce::Colour text { 0xffd9e6ee };
-const juce::Colour dimText { 0xff7f94a3 };
-const juce::Colour biolume { 0xff2fe0c8 };
-const juce::Colour pressure { 0xff4c8dff };
-const juce::Colour ember { 0xffff7a45 };
-const juce::Colour kelp { 0xffa3e05a };
-const juce::Colour aurora { 0xffb98cff };
-} // namespace palette
 
 //==============================================================================
 PomanLookAndFeel::PomanLookAndFeel()
@@ -245,6 +232,23 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     addAndMakeVisible (inputMeter);
     addAndMakeVisible (outputMeter);
 
+    if (processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+    {
+        studioView = std::make_unique<StudioView> (processor.getRecorder());
+        addChildComponent (*studioView);
+
+        for (auto* b : { &rigPageButton, &studioPageButton })
+        {
+            b->setRadioGroupId (1001);
+            b->setClickingTogglesState (true);
+            b->setColour (juce::TextButton::buttonOnColourId, palette::biolume);
+            addAndMakeVisible (*b);
+        }
+        rigPageButton.setToggleState (true, juce::dontSendNotification);
+        rigPageButton.onClick = [this] { showStudio (false); };
+        studioPageButton.onClick = [this] { showStudio (true); };
+    }
+
     setResizable (true, true);
     setResizeLimits (900, 692, 1600, 1231);
     getConstrainer()->setFixedAspectRatio (1040.0 / 800.0);
@@ -299,6 +303,18 @@ void PomanEditor::showSavePresetDialog()
         }
         saveDialog = nullptr;
     }), false);
+}
+
+void PomanEditor::showStudio (bool studio)
+{
+    if (studioView == nullptr)
+        return;
+
+    studioView->setVisible (studio);
+    if (studio)
+        studioView->toFront (false);
+    else if (tunerDisplay.isVisible())
+        tunerDisplay.toFront (false);
 }
 
 void PomanEditor::setTunerVisible (bool visible)
@@ -593,7 +609,14 @@ void PomanEditor::resized()
         k->slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     }
 
-    header.removeFromLeft (sc (270));
+    header.removeFromLeft (sc (studioView != nullptr ? 250 : 270));
+    if (studioView != nullptr)
+    {
+        auto pages = header.removeFromLeft (sc (124)).withSizeKeepingCentre (sc (124), sc (30));
+        rigPageButton.setBounds (pages.removeFromLeft (sc (62)).reduced (sc (2), 0));
+        studioPageButton.setBounds (pages.reduced (sc (2), 0));
+        header.removeFromLeft (sc (8));
+    }
     auto presetRow = header.withSizeKeepingCentre (header.getWidth(), sc (30));
     tunerButton.setBounds (presetRow.removeFromRight (sc (80)).reduced (sc (4), 0));
     presetRow.removeFromRight (sc (10));
@@ -663,4 +686,7 @@ void PomanEditor::resized()
     }
 
     tunerDisplay.setBounds (ampSection->bounds);
+
+    if (studioView != nullptr)
+        studioView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
 }

@@ -13,6 +13,7 @@
 #include "PortablePaths.h"
 #include "PresetManager.h"
 #include "Tuner.h"
+#include "recorder/MultitrackRecorder.h"
 
 class PomanProcessor : public juce::AudioProcessor
 {
@@ -53,6 +54,7 @@ public:
     void applyState (const juce::ValueTree& state);
 
     poman::PresetManager& getPresetManager() { return *presetManager; }
+    poman::MultitrackRecorder& getRecorder() { return *recorder; }
 
     // Peak levels since the last call (UI thread), for the meters.
     float takeInputPeak() { return inputPeak.exchange (0.0f); }
@@ -97,6 +99,7 @@ private:
     int maxChunkSize = 512;
 
     std::unique_ptr<poman::PresetManager> presetManager;
+    std::unique_ptr<poman::MultitrackRecorder> recorder;
     poman::Tuner tuner;
     std::atomic<bool> tunerActive { false };
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };

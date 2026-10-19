@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(POMAN VERSION 0.4.0 LANGUAGES C CXX)
+project(POMAN VERSION 0.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -33,7 +33,9 @@ target_sources(POMAN PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/StandaloneApp.cpp
-    Source/PresetManager.cpp)
+    Source/PresetManager.cpp
+    Source/recorder/MultitrackRecorder.cpp
+    Source/StudioView.cpp)
 
 target_include_directories(POMAN PRIVATE Source)
 
@@ -67,3 +69,9 @@ target_sources(POMANDspTests PRIVATE Tests/DspTest.cpp)
 target_include_directories(POMANDspTests PRIVATE Source)
 target_compile_definitions(POMANDspTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(POMANDspTests PRIVATE juce::juce_dsp PUBLIC juce::juce_recommended_config_flags)
+
+juce_add_console_app(POMANRecorderTests PRODUCT_NAME "POMANRecorderTests")
+target_sources(POMANRecorderTests PRIVATE Tests/RecorderTest.cpp Source/recorder/MultitrackRecorder.cpp)
+target_include_directories(POMANRecorderTests PRIVATE Source)
+target_compile_definitions(POMANRecorderTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(POMANRecorderTests PRIVATE juce::juce_audio_formats juce::juce_events PUBLIC juce::juce_recommended_config_flags)

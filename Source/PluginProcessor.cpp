@@ -125,6 +125,12 @@ PomanProcessor::PomanProcessor()
         jassert (rawParameters[i] != nullptr);
     }
 
+    // The standalone keeps recordings in the portable folder; the plugin (and read-only installs) in Documents.
+    const bool portable = wrapperType == wrapperType_Standalone && poman::portableRoot().hasWriteAccess();
+    recorder = std::make_unique<poman::MultitrackRecorder> (
+        portable ? poman::portableRoot().getChildFile ("Recordings")
+                 : juce::File::getSpecialLocation (juce::File::userDocumentsDirectory).getChildFile ("POMAN").getChildFile ("Recordings"));
+
     presetManager = std::make_unique<poman::PresetManager> (
         apvts, wrapperType == wrapperType_Standalone, [this] (const juce::ValueTree& state) { applyState (state); });
 }
@@ -149,6 +155,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     delay.prepare (sampleRate, maxChunkSize);
     reverb.prepare (sampleRate, maxChunkSize);
     harmonizer.prepare (sampleRate);
+    recorder->prepare (sampleRate);
     tuner.prepare (sampleRate);
 
     inputGain.reset (sampleRate, 0.03);
@@ -284,6 +291,9 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
         left[i] *= g;
         right[i] *= g;
     }
+
+    // Records the finished rig sound, then layers the other tracks and the click on top.
+    recorder->process (left, right, numSamples);
 
     if (tunerOn)
     {

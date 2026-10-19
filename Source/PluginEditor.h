@@ -2,6 +2,7 @@
 
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "PluginProcessor.h"
+#include "StudioView.h"
 
 class PomanLookAndFeel : public juce::LookAndFeel_V4
 {
@@ -112,6 +113,11 @@ private:
     juce::String shownPresetName;
 
     LevelMeter inputMeter, outputMeter;
+
+    // Standalone only: RIG / STUDIO pages (a DAW does its own recording).
+    juce::TextButton rigPageButton { "RIG" }, studioPageButton { "STUDIO" };
+    std::unique_ptr<StudioView> studioView;
+    void showStudio (bool studio);
     TunerDisplay tunerDisplay;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PomanEditor)

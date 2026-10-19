@@ -1,8 +1,21 @@
-POMAN - Guitar Amp Suite (version portable 0.4.0)
+POMAN - Guitar Amp Suite (version portable 0.5.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.5.0
+- Grabacion por pistas: boton STUDIO (arriba, junto a RIG).
+  * 4 pistas estereo. R = armar pista, M = mute, S = solo, X = borrar,
+    barra = volumen. Haz clic en la forma de onda para mover el cursor.
+  * REC graba la pista armada con el sonido completo de POMAN mientras
+    escuchas las demas pistas. STOP guarda la toma. |< vuelve al inicio.
+  * CLICK = metronomo (BPM ajustable, acento en el 1). No se graba.
+  * La latencia de tu interfaz se compensa sola: las tomas quedan en tiempo.
+  * Cada toma se guarda como WAV 24-bit en Recordings\Session <fecha>\.
+    EXPORT MIX crea Mix.wav con todas las pistas (respeta mute/solo/volumen).
+    OPEN FOLDER abre la carpeta de la sesion.
+  * Puedes cambiar a RIG mientras grabas para ajustar el sonido.
 
 Novedades 0.4.0
 - HARMONIZER de 2 voces (activalo con su LED):
@@ -35,6 +48,7 @@ Novedades 0.2.0
 
 Carpetas
 - Presets\  tus presets (.poman). Puedes copiarlos entre equipos.
+- Recordings\  tus grabaciones (WAV), una carpeta por sesion.
 - IRs\      tus impulsos de cabina (.wav / .aif). Los IR cargados desde aqui
             se guardan con ruta relativa y siguen funcionando si mueves la
             carpeta.
