@@ -66,7 +66,8 @@ void StudioView::Lane::paint (juce::Graphics& g)
         g.fillRect (x0, 0.0f, juce::jmax (1.0f, x1 - x0), bounds.getHeight());
         g.setColour (recordRed);
         g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-        g.drawText ("RECORDING", juce::Rectangle<float> (x0 + 6.0f, 4.0f, 100.0f, 16.0f), juce::Justification::centredLeft);
+        g.drawText (recorder.isCountingIn() ? "COUNT-IN" : "RECORDING", juce::Rectangle<float> (x0 + 6.0f, 4.0f, 100.0f, 16.0f),
+                    juce::Justification::centredLeft);
     }
     else if (! info.hasAudio)
     {
@@ -95,13 +96,16 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
 {
     setOpaque (true);
 
-    for (auto* b : { &rewindButton, &playButton, &stopButton, &recordButton, &clickButton, &newSessionButton, &exportButton, &folderButton })
+    for (auto* b : { &rewindButton, &playButton, &stopButton, &recordButton, &clickButton, &countInButton,
+                     &newSessionButton, &openSessionButton, &exportButton, &folderButton })
     {
         b->setColour (juce::TextButton::buttonOnColourId, palette::biolume);
         addAndMakeVisible (*b);
     }
     recordButton.setColour (juce::TextButton::buttonOnColourId, recordRed);
     clickButton.setColour (juce::TextButton::buttonOnColourId, palette::kelp);
+    countInButton.setColour (juce::TextButton::buttonOnColourId, palette::kelp);
+    countInButton.setTooltip ("One bar of click (with the other tracks playing) before recording starts");
 
     rewindButton.onClick = [this] { recorder.rewind(); repaint(); };
     playButton.onClick = [this] { recorder.play(); refreshControls(); };
@@ -122,7 +126,27 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
             setStatus ("Recording track " + juce::String (recorder.getRecordingTrack() + 1) + "...");
         refreshControls();
     };
-    clickButton.onClick = [this] { recorder.setMetronome (! recorder.isMetronomeOn()); refreshControls(); };
+    clickButton.onClick = [this] { recorder.setMetronome (! recorder.isMetronomeOn()); recorder.saveSession(); refreshControls(); };
+    countInButton.onClick = [this] { recorder.setCountIn (! recorder.isCountInEnabled()); recorder.saveSession(); refreshControls(); };
+
+    openSessionButton.onClick = [this]
+    {
+        sessionChooser = std::make_unique<juce::FileChooser> ("Open a POMAN session folder", recorder.getRecordingsRoot(), "*");
+        sessionChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                                     [this] (const juce::FileChooser& chooser)
+                                     {
+                                         const auto folder = chooser.getResult();
+                                         if (folder == juce::File())
+                                             return;
+                                         const auto result = recorder.openSession (folder);
+                                         setStatus (result.wasOk() ? "Opened " + folder.getFileName() : result.getErrorMessage(), result.failed());
+                                         bpmSlider.setValue (recorder.getBpm(), juce::dontSendNotification);
+                                         for (int t = 0; t < poman::MultitrackRecorder::numTracks; ++t)
+                                             tracks[(size_t) t].volume.setValue (recorder.getVolume (t), juce::dontSendNotification);
+                                         visibleSamples = 1;
+                                         refreshControls();
+                                     });
+    };
 
     newSessionButton.onClick = [this]
     {
@@ -160,7 +184,7 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
     bpmSlider.setRange (40.0, 240.0, 1.0);
     bpmSlider.setValue (recorder.getBpm(), juce::dontSendNotification);
     bpmSlider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 44, 24);
-    bpmSlider.onValueChange = [this] { recorder.setBpm (bpmSlider.getValue()); };
+    bpmSlider.onValueChange = [this] { recorder.setBpm (bpmSlider.getValue()); recorder.saveSession(); };
     addAndMakeVisible (bpmSlider);
 
     bpmLabel.setText ("BPM", juce::dontSendNotification);
@@ -198,9 +222,9 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
         tc.clear.setTooltip ("Clear this track (the WAV file stays on disk)");
 
         tc.arm.onClick = [this, t] { recorder.armTrack (recorder.getArmedTrack() == t ? -1 : t); refreshControls(); };
-        tc.mute.onClick = [this, t] { recorder.setMuted (t, ! recorder.isMuted (t)); refreshControls(); };
-        tc.solo.onClick = [this, t] { recorder.setSolo (t, ! recorder.isSolo (t)); refreshControls(); };
-        tc.clear.onClick = [this, t] { recorder.clearTrack (t); refreshControls(); };
+        tc.mute.onClick = [this, t] { recorder.setMuted (t, ! recorder.isMuted (t)); recorder.saveSession(); refreshControls(); };
+        tc.solo.onClick = [this, t] { recorder.setSolo (t, ! recorder.isSolo (t)); recorder.saveSession(); refreshControls(); };
+        tc.clear.onClick = [this, t] { recorder.clearTrack (t); recorder.saveSession(); refreshControls(); };
 
         for (auto* b : { &tc.arm, &tc.mute, &tc.solo, &tc.clear })
             addAndMakeVisible (*b);
@@ -213,6 +237,7 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
         tc.volume.setColour (juce::Slider::thumbColourId, colour);
         tc.volume.setColour (juce::Slider::backgroundColourId, palette::abyss);
         tc.volume.onValueChange = [this, t] { recorder.setVolume (t, (float) tracks[(size_t) t].volume.getValue()); };
+        tc.volume.onDragEnd = [this] { recorder.saveSession(); };
         addAndMakeVisible (tc.volume);
 
         tc.lane = std::make_unique<Lane> (*this, t, colour);
@@ -254,6 +279,7 @@ void StudioView::refreshControls()
     playButton.setToggleState (state == State::playing, juce::dontSendNotification);
     recordButton.setToggleState (state == State::recording, juce::dontSendNotification);
     clickButton.setToggleState (recorder.isMetronomeOn(), juce::dontSendNotification);
+    countInButton.setToggleState (recorder.isCountInEnabled(), juce::dontSendNotification);
 
     for (int t = 0; t < poman::MultitrackRecorder::numTracks; ++t)
     {
@@ -275,7 +301,18 @@ void StudioView::timerCallback()
     if (wanted > visibleSamples)
         visibleSamples = wanted;
 
-    timeLabel.setText (formatPosition (recorder.getPlayhead()), juce::dontSendNotification);
+    if (recorder.isCountingIn())
+    {
+        const double samplesPerBeat = recorder.getSampleRate() * 60.0 / recorder.getBpm();
+        const auto beatsLeft = (int) std::ceil ((double) (recorder.getRecordingStart() - recorder.getPlayhead()) / samplesPerBeat);
+        timeLabel.setText ("COUNT-IN  " + juce::String (beatsLeft), juce::dontSendNotification);
+        timeLabel.setColour (juce::Label::textColourId, recordRed);
+    }
+    else
+    {
+        timeLabel.setText (formatPosition (recorder.getPlayhead()), juce::dontSendNotification);
+        timeLabel.setColour (juce::Label::textColourId, palette::text);
+    }
     refreshControls();
     repaint();
 }
@@ -322,12 +359,14 @@ void StudioView::resized()
     timeLabel.setBounds (transport.removeFromLeft (230).reduced (3, 2));
     transport.removeFromLeft (10);
     clickButton.setBounds (transport.removeFromLeft (70).reduced (3, 2));
+    countInButton.setBounds (transport.removeFromLeft (90).reduced (3, 2));
     bpmLabel.setBounds (transport.removeFromLeft (36));
     bpmSlider.setBounds (transport.removeFromLeft (110).reduced (0, 4));
 
     // Session actions share the bottom bar with the status line.
     auto footer = area.removeFromBottom (34).withTrimmedTop (4);
     newSessionButton.setBounds (footer.removeFromLeft (120).reduced (3, 2));
+    openSessionButton.setBounds (footer.removeFromLeft (124).reduced (3, 2));
     exportButton.setBounds (footer.removeFromLeft (112).reduced (3, 2));
     folderButton.setBounds (footer.removeFromLeft (118).reduced (3, 2));
     statusLabel.setBounds (footer.withTrimmedLeft (10));

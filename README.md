@@ -27,7 +27,8 @@ Input → [Afinador] → Gate → Submerge (octavador) → Drive (5 tipos) → P
 ## Estudio (standalone)
 
 Página **STUDIO** con 4 pistas estéreo: grabación de la salida completa del rig mientras suenan las demás pistas,
-mute/solo/volumen, metrónomo, compensación automática de latencia (entrada + salida del dispositivo + latencia
+cuenta atrás de un compás con pre-roll, mute/solo/volumen, metrónomo, sesiones (`session.xml`, se guardan solas y se
+reabren con OPEN SESSION), compensación automática de latencia (entrada + salida del dispositivo + latencia
 del plugin) y exportación de la mezcla. Las tomas se escriben en disco desde un hilo en segundo plano
 (`ThreadedWriter`) como WAV de 24 bits en `Recordings/Session <fecha>/`; el hilo de audio no se bloquea nunca.
 En el VST3 la página no aparece: ahí graba el DAW.
@@ -57,7 +58,7 @@ Se genera:
 cmake --build build --config Release --target POMANTests POMANDspTests POMANRecorderTests
 build/POMANTests_artefacts/Release/POMANTests.exe        # precisión del afinador
 build/POMANDspTests_artefacts/Release/POMANDspTests.exe  # render de amps/drives, intervalos y afinación del harmonizer
-build/POMANRecorderTests_artefacts/Release/POMANRecorderTests.exe  # grabación, latencia, mute/solo, overdub, export, metrónomo
+build/POMANRecorderTests_artefacts/Release/POMANRecorderTests.exe  # grabación, latencia, mute/solo, overdub, export, metrónomo, cuenta atrás, sesiones
 ```
 
 ## Estructura

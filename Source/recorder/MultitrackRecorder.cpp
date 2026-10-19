@@ -15,6 +15,7 @@ MultitrackRecorder::MultitrackRecorder (juce::File root)
 MultitrackRecorder::~MultitrackRecorder()
 {
     finishRecording();
+    saveSession();
     writerThread.stopThread (4000);
 }
 
@@ -31,17 +32,24 @@ void MultitrackRecorder::process (float* left, float* right, int numSamples) noe
     if (currentState == State::stopped)
         return;
 
-    if (currentState == State::recording)
+    // Seeks from the message thread are applied here, so they cannot race with the playhead advance.
+    auto position = playhead.load();
+    if (const auto seek = seekRequest.exchange (noSeek); seek != noSeek)
+        position = seek;
+    const auto takeStart = recordingStart.load();
+
+    // During the count-in the playhead runs up to takeStart; only samples from there on are recorded.
+    if (currentState == State::recording && position + numSamples > takeStart)
     {
         const juce::SpinLock::ScopedTryLockType lock (writerLock);
         if (lock.isLocked() && activeWriter != nullptr)
         {
-            const float* channels[] { left, right };
-            activeWriter->write (channels, numSamples);
+            const int skip = (int) juce::jmax ((juce::int64) 0, takeStart - position);
+            const float* channels[] { left + skip, right + skip };
+            activeWriter->write (channels, numSamples - skip);
         }
     }
 
-    const auto position = playhead.load();
     {
         const juce::SpinLock::ScopedTryLockType lock (takeLock);
         if (lock.isLocked())
@@ -74,27 +82,33 @@ void MultitrackRecorder::process (float* left, float* right, int numSamples) noe
         }
     }
 
+    // Count-in clicks are counted back from the take start; the metronome follows the session grid.
+    const int countInEnd = currentState == State::recording
+                               ? (int) juce::jlimit ((juce::int64) 0, (juce::int64) numSamples, takeStart - position)
+                               : 0;
+    if (countInEnd > 0)
+        addClick (left, right, 0, countInEnd, position, takeStart);
     if (metronomeOn.load())
-        addClick (left, right, numSamples, position);
+        addClick (left, right, countInEnd, numSamples, position, 0);
 
     playhead.store (position + numSamples);
 }
 
-void MultitrackRecorder::addClick (float* left, float* right, int numSamples, juce::int64 position) noexcept
+void MultitrackRecorder::addClick (float* left, float* right, int from, int to, juce::int64 position, juce::int64 origin) noexcept
 {
     const double sr = sampleRate.load();
     const double samplesPerBeat = sr * 60.0 / tempo.load();
     const float decay = (float) std::exp (-1.0 / (0.012 * sr));
 
-    for (int i = 0; i < numSamples; ++i)
+    for (int i = from; i < to; ++i)
     {
-        const auto sample = position + i;
+        const auto sample = position + i - origin;
         const auto beat = (juce::int64) std::floor ((double) sample / samplesPerBeat);
         if ((juce::int64) std::floor ((double) beat * samplesPerBeat) == sample)
         {
             clickEnvelope = 1.0f;
             clickPhase = 0.0f;
-            clickFrequency = beat % 4 == 0 ? 1600.0f : 1000.0f; // accent on the downbeat (4/4)
+            clickFrequency = ((beat % 4) + 4) % 4 == 0 ? 1600.0f : 1000.0f; // accent on the downbeat (4/4)
         }
 
         if (clickEnvelope > 1.0e-4f)
@@ -120,12 +134,29 @@ void MultitrackRecorder::stop()
     if (state.load() == State::recording)
         finishRecording();
     state.store (State::stopped);
+
+    // Stopping inside a count-in from 0:00 leaves the playhead in the pre-roll.
+    if (playhead.load() < 0)
+        movePlayhead (0);
 }
 
 void MultitrackRecorder::setPlayhead (juce::int64 sample)
 {
     if (state.load() != State::recording)
-        playhead.store (juce::jmax ((juce::int64) 0, sample));
+        movePlayhead (juce::jmax ((juce::int64) 0, sample));
+}
+
+void MultitrackRecorder::movePlayhead (juce::int64 sample)
+{
+    if (state.load() == State::stopped)
+    {
+        seekRequest.store (noSeek);
+        playhead.store (sample);
+    }
+    else
+    {
+        seekRequest.store (sample);
+    }
 }
 
 void MultitrackRecorder::armTrack (int track)
@@ -143,8 +174,14 @@ juce::Result MultitrackRecorder::record()
     if (track < 0)
         return juce::Result::fail ("Arm a track first (R button).");
 
-    if (! sessionFolder.createDirectory())
-        return juce::Result::fail ("Cannot create " + sessionFolder.getFullPathName());
+    if (! sessionOwned)
+    {
+        if (sessionFolder.exists())
+            sessionFolder = sessionFolder.getParentDirectory().getNonexistentChildFile (sessionFolder.getFileName(), {}, false);
+        if (! sessionFolder.createDirectory())
+            return juce::Result::fail ("Cannot create " + sessionFolder.getFullPathName());
+        sessionOwned = true;
+    }
 
     auto file = sessionFolder.getNonexistentChildFile ("Track " + juce::String (track + 1), ".wav", false);
     std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
@@ -164,6 +201,11 @@ juce::Result MultitrackRecorder::record()
     recordingFile = file;
     recordingTrack = track;
     recordingStart = playhead.load();
+    recordingTrim = latencyCompensation.load();
+
+    // Pre-roll one bar: the other tracks and the click play in before the take starts.
+    if (countInEnabled.load())
+        movePlayhead (recordingStart.load() - (juce::int64) std::round (4.0 * 60.0 / tempo.load() * sampleRate.load()));
     {
         const juce::SpinLock::ScopedLockType lock (writerLock);
         activeWriter = std::move (threaded);
@@ -187,8 +229,15 @@ void MultitrackRecorder::finishRecording()
     finished.reset();              // flushes the FIFO and closes the WAV
 
     // The recorded rig output arrives late by the round trip, so drop that much from the head.
-    if (auto take = loadTake (recordingFile, recordingStart, latencyCompensation.load()))
+    if (auto take = loadTake (recordingFile, recordingStart.load(), recordingTrim))
+    {
         replaceTake (recordingTrack.load(), std::move (take));
+        saveSession();
+    }
+    else
+    {
+        recordingFile.deleteFile(); // stopped during the count-in: nothing was captured
+    }
 
     recordingTrack = -1;
 }
@@ -202,6 +251,7 @@ std::unique_ptr<MultitrackRecorder::Take> MultitrackRecorder::loadTake (const ju
     auto take = std::make_unique<Take>();
     take->file = file;
     take->start = start;
+    take->trim = trimSamples;
     const auto length = (int) juce::jmin<juce::int64> (reader->lengthInSamples - trimSamples, std::numeric_limits<int>::max());
     take->audio.setSize (2, length);
     reader->read (&take->audio, 0, length, trimSamples, true, reader->numChannels > 1);
@@ -235,10 +285,98 @@ void MultitrackRecorder::clearTrack (int track)
 void MultitrackRecorder::newSession()
 {
     stop();
+    saveSession();
     for (int t = 0; t < numTracks; ++t)
         replaceTake (t, nullptr);
-    playhead.store (0);
+    movePlayhead (0);
+    sessionOwned = false;
     sessionFolder = recordingsRoot.getChildFile ("Session " + juce::Time::getCurrentTime().formatted ("%Y-%m-%d %H-%M-%S"));
+}
+
+void MultitrackRecorder::saveSession() const
+{
+    if (! sessionOwned || ! sessionFolder.isDirectory())
+        return; // nothing recorded or opened yet
+
+    juce::XmlElement root ("POMANSession");
+    root.setAttribute ("version", 1);
+    root.setAttribute ("bpm", tempo.load());
+    root.setAttribute ("metronome", metronomeOn.load());
+    root.setAttribute ("countIn", countInEnabled.load());
+
+    for (int t = 0; t < numTracks; ++t)
+    {
+        auto* track = root.createNewChildElement ("Track");
+        track->setAttribute ("index", t);
+        track->setAttribute ("volume", trackVolume[(size_t) t].load());
+        track->setAttribute ("muted", trackMuted[(size_t) t].load());
+        track->setAttribute ("solo", trackSolo[(size_t) t].load());
+        if (const auto* take = takes[(size_t) t].get())
+        {
+            track->setAttribute ("file", take->file.getRelativePathFrom (sessionFolder));
+            track->setAttribute ("start", juce::String (take->start));
+            track->setAttribute ("trim", take->trim);
+        }
+    }
+
+    root.writeTo (sessionFolder.getChildFile ("session.xml"));
+}
+
+juce::Result MultitrackRecorder::openSession (const juce::File& folder)
+{
+    if (! folder.isDirectory())
+        return juce::Result::fail ("Not a folder: " + folder.getFullPathName());
+
+    stop();
+    saveSession();
+    std::array<std::unique_ptr<Take>, numTracks> loaded;
+    int found = 0;
+
+    if (const auto xml = juce::parseXML (folder.getChildFile ("session.xml")); xml != nullptr && xml->hasTagName ("POMANSession"))
+    {
+        setBpm (xml->getDoubleAttribute ("bpm", tempo.load()));
+        metronomeOn.store (xml->getBoolAttribute ("metronome", false));
+        countInEnabled.store (xml->getBoolAttribute ("countIn", true));
+
+        for (auto* track : xml->getChildWithTagNameIterator ("Track"))
+        {
+            const int t = track->getIntAttribute ("index", -1);
+            if (t < 0 || t >= numTracks)
+                continue;
+
+            trackVolume[(size_t) t].store ((float) track->getDoubleAttribute ("volume", 0.8));
+            trackMuted[(size_t) t].store (track->getBoolAttribute ("muted", false));
+            trackSolo[(size_t) t].store (track->getBoolAttribute ("solo", false));
+
+            const auto fileName = track->getStringAttribute ("file");
+            if (fileName.isNotEmpty())
+                if ((loaded[(size_t) t] = loadTake (folder.getChildFile (fileName), track->getStringAttribute ("start").getLargeIntValue(),
+                                                    track->getIntAttribute ("trim", 0))) != nullptr)
+                    ++found;
+        }
+    }
+    else
+    {
+        for (int t = 0; t < numTracks; ++t)
+        {
+            auto candidates = folder.findChildFiles (juce::File::findFiles, false, "Track " + juce::String (t + 1) + "*.wav");
+            std::sort (candidates.begin(), candidates.end(),
+                       [] (const juce::File& a, const juce::File& b) { return a.getLastModificationTime() > b.getLastModificationTime(); });
+            if (! candidates.isEmpty() && (loaded[(size_t) t] = loadTake (candidates.getFirst(), 0, 0)) != nullptr)
+                ++found;
+        }
+
+        if (found == 0)
+            return juce::Result::fail ("No POMAN session or Track WAV files in " + folder.getFileName());
+    }
+
+    for (int t = 0; t < numTracks; ++t)
+        replaceTake (t, std::move (loaded[(size_t) t]));
+
+    sessionFolder = folder;
+    sessionOwned = true;
+    movePlayhead (0);
+    return juce::Result::ok();
 }
 
 MultitrackRecorder::TrackInfo MultitrackRecorder::getTrackInfo (int track) const

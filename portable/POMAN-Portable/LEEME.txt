@@ -1,8 +1,18 @@
-POMAN - Guitar Amp Suite (version portable 0.5.0)
+POMAN - Guitar Amp Suite (version portable 0.6.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.6.0
+- COUNT-IN (activado por defecto): al pulsar REC suena 1 compas de clic
+  (con las demas pistas sonando) y la grabacion empieza justo despues.
+  En la pantalla veras COUNT-IN 4, 3, 2, 1. Si paras durante la cuenta,
+  no se guarda nada.
+- Sesiones: se guardan solas (session.xml en la carpeta de la sesion) con
+  pistas, posiciones, volumen, mute/solo, BPM y metronomo.
+  OPEN SESSION abre una sesion anterior (elige su carpeta en Recordings).
+  Tambien abre las carpetas grabadas con la 0.5.0.
 
 Novedades 0.5.0
 - Grabacion por pistas: boton STUDIO (arriba, junto a RIG).

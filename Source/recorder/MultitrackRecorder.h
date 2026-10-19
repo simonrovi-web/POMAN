@@ -47,9 +47,17 @@ public:
 
     void clearTrack (int track);
     void newSession();
+    // session.xml in the session folder: takes (file, position, latency trim), mixer, tempo and click.
+    // Written automatically after every take and on exit; call after mixer edits to keep it current.
+    void saveSession() const;
+    // Opens a session folder. Folders from 0.5.0 (no session.xml) load each track's newest WAV at 0:00.
+    juce::Result openSession (const juce::File& folder);
+    juce::File getRecordingsRoot() const { return recordingsRoot; }
     juce::Result exportMix (juce::File& writtenFile);
     juce::File getSessionFolder() const { return sessionFolder; }
 
+    void setCountIn (bool enabled) { countInEnabled.store (enabled); }
+    bool isCountInEnabled() const { return countInEnabled.load(); }
     void setMetronome (bool enabled) { metronomeOn.store (enabled); }
     bool isMetronomeOn() const { return metronomeOn.load(); }
     void setBpm (double bpm) { tempo.store (juce::jlimit (40.0, 240.0, bpm)); }
@@ -63,7 +71,9 @@ public:
     juce::int64 getPlayhead() const { return playhead.load(); }
     double getSampleRate() const { return sampleRate.load(); }
     int getRecordingTrack() const { return recordingTrack.load(); }
-    juce::int64 getRecordingStart() const { return recordingStart; } // message thread
+    juce::int64 getRecordingStart() const { return recordingStart.load(); }
+    // True while recording but the playhead is still in the one-bar count-in.
+    bool isCountingIn() const { return state.load() == State::recording && playhead.load() < recordingStart.load(); }
 
     struct TrackInfo
     {
@@ -80,6 +90,7 @@ private:
     {
         juce::AudioBuffer<float> audio;
         juce::int64 start = 0;
+        int trim = 0; // samples dropped from the head of the file (latency compensation)
         std::vector<float> peaks;
         juce::File file;
     };
@@ -87,16 +98,21 @@ private:
     void finishRecording();
     std::unique_ptr<Take> loadTake (const juce::File& file, juce::int64 start, int trimSamples);
     void replaceTake (int track, std::unique_ptr<Take> take);
-    void addClick (float* left, float* right, int numSamples, juce::int64 position) noexcept;
+    void movePlayhead (juce::int64 sample);
+    void addClick (float* left, float* right, int from, int to, juce::int64 position, juce::int64 origin) noexcept;
 
     juce::File recordingsRoot, sessionFolder;
+    // True once this recorder created (first take) or opened sessionFolder. Only an owned folder is
+    // ever written, so a same-named folder from another session can never be overwritten.
+    bool sessionOwned = false;
     juce::AudioFormatManager formatManager;
     juce::TimeSliceThread writerThread { "POMAN recorder" };
 
     juce::SpinLock writerLock;
     std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> activeWriter;
     juce::File recordingFile;
-    juce::int64 recordingStart = 0;
+    std::atomic<juce::int64> recordingStart { 0 }; // take start on the timeline, read by process()
+    int recordingTrim = 0;
     std::atomic<int> recordingTrack { -1 }; // written on the message thread, read by process()
 
     juce::SpinLock takeLock;
@@ -104,13 +120,15 @@ private:
 
     std::atomic<State> state { State::stopped };
     std::atomic<juce::int64> playhead { 0 };
+    static constexpr juce::int64 noSeek = std::numeric_limits<juce::int64>::min();
+    std::atomic<juce::int64> seekRequest { noSeek };
     std::atomic<double> sampleRate { 48000.0 };
     std::atomic<int> armedTrack { 0 };
     std::atomic<int> latencyCompensation { 0 };
     std::array<std::atomic<bool>, numTracks> trackMuted {}, trackSolo {};
     std::array<std::atomic<float>, numTracks> trackVolume {};
 
-    std::atomic<bool> metronomeOn { false };
+    std::atomic<bool> metronomeOn { false }, countInEnabled { true };
     std::atomic<double> tempo { 120.0 };
     float clickPhase = 0.0f, clickEnvelope = 0.0f, clickFrequency = 1000.0f;
 

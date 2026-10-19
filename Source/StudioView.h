@@ -48,7 +48,9 @@ private:
     poman::MultitrackRecorder& recorder;
 
     juce::TextButton rewindButton { "|<" }, playButton { "PLAY" }, stopButton { "STOP" }, recordButton { "REC" };
-    juce::TextButton clickButton { "CLICK" }, newSessionButton { "NEW SESSION" }, exportButton { "EXPORT MIX" }, folderButton { "OPEN FOLDER" };
+    juce::TextButton clickButton { "CLICK" }, countInButton { "COUNT-IN" };
+    juce::TextButton newSessionButton { "NEW SESSION" }, openSessionButton { "OPEN SESSION" }, exportButton { "EXPORT MIX" }, folderButton { "OPEN FOLDER" };
+    std::unique_ptr<juce::FileChooser> sessionChooser;
     juce::Slider bpmSlider;
     juce::Label timeLabel, statusLabel, bpmLabel;
     std::array<TrackControls, poman::MultitrackRecorder::numTracks> tracks;

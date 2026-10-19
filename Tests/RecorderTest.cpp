@@ -43,6 +43,7 @@ int main()
         poman::MultitrackRecorder recorder (root);
         recorder.prepare (sampleRate);
         recorder.setLatencyCompensation (1000);
+        recorder.setCountIn (false); // sections 1-7 record immediately; the count-in has its own checks below
 
         // 1) Record one second on track 1: silence, then an impulse 1000 samples in, then a sine.
         recorder.armTrack (0);
@@ -136,6 +137,90 @@ int main()
         auto idle = run (recorder, 4000, [] (int) { return 0.0f; });
         expect (idle.getMagnitude (0, 0, 4000) == 0.0f && recorder.getPlayhead() == playheadBefore,
                 "stopped transport leaves output and playhead untouched");
+    }
+
+    // 8) Count-in: one bar (2 s at 120 BPM) of click with nothing recorded, then the take starts at 0:00.
+    {
+        poman::MultitrackRecorder recorder (root);
+        recorder.prepare (sampleRate);
+        recorder.setLatencyCompensation (1000);
+        recorder.setBpm (120.0);
+        recorder.setCountIn (true);
+        recorder.setMetronome (false);
+        recorder.setVolume (0, 0.5f);
+        recorder.armTrack (0);
+        recorder.record();
+
+        const int bar = (int) sampleRate * 2;
+        bool countingMidway = false;
+        auto output = run (recorder, bar + (int) sampleRate, [&] (int i)
+        {
+            if (i == bar / 2)
+                countingMidway = recorder.isCountingIn();
+            if (i < bar) return 0.3f; // anything played during the count-in must not be recorded
+            return i == bar + 1000 ? 1.0f : 0.0f;
+        });
+        expect (countingMidway, "isCountingIn() during the pre-roll bar");
+        expect (output.getMagnitude (0, 0, 2000) > 0.4f, "count-in clicks even with CLICK off");
+        recorder.stop();
+
+        const auto info = recorder.getTrackInfo (0);
+        expect (info.hasAudio && info.start == 0 && info.length == (juce::int64) sampleRate - 1000,
+                "take starts at the record position after count-in", juce::String (info.length) + " samples");
+
+        recorder.rewind();
+        recorder.play();
+        auto played = run (recorder, 4000, [] (int) { return 0.0f; });
+        recorder.stop();
+        expect (std::abs (played.getSample (0, 0) - 0.5f) < 1.0e-3f && played.getMagnitude (0, 10, 3000) < 1.0e-4f,
+                "only post-count-in audio recorded, impulse at 0");
+
+        // Stop inside the count-in: no take, no file, playhead back at 0.
+        const auto filesBefore = root.findChildFiles (juce::File::findFiles, true, "*.wav").size();
+        recorder.armTrack (1);
+        recorder.record();
+        run (recorder, bar / 2, [] (int) { return 0.3f; });
+        recorder.stop();
+        expect (! recorder.getTrackInfo (1).hasAudio && recorder.getPlayhead() == 0
+                    && root.findChildFiles (juce::File::findFiles, true, "*.wav").size() == filesBefore,
+                "stop during count-in discards the take");
+
+        // 9) Session file: reopen in a fresh recorder (as after restarting the app).
+        recorder.setMuted (0, true);
+        recorder.saveSession();
+        const auto folder = recorder.getSessionFolder();
+
+        poman::MultitrackRecorder reopened (root);
+        reopened.prepare (sampleRate);
+        const auto opened = reopened.openSession (folder);
+        const auto again = reopened.getTrackInfo (0);
+        expect (opened.wasOk() && again.hasAudio && again.start == info.start && again.length == info.length,
+                "openSession restores takes with position and trim");
+        expect (std::abs (reopened.getVolume (0) - 0.5f) < 1.0e-6f && reopened.isMuted (0) && reopened.isCountInEnabled(),
+                "openSession restores mixer and count-in");
+    }
+
+    // 10) Folders recorded by 0.5.0 have no session.xml: load each track's WAV at 0:00.
+    {
+        const auto legacy = root.getChildFile ("Legacy");
+        legacy.createDirectory();
+        juce::AudioBuffer<float> tone (2, 4800);
+        for (int i = 0; i < tone.getNumSamples(); ++i)
+            tone.setSample (0, i, 0.2f), tone.setSample (1, i, 0.2f);
+        {
+            std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (legacy.getChildFile ("Track 2.wav"));
+            juce::WavAudioFormat wav;
+            auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions{}.withSampleRate (sampleRate).withNumChannels (2).withBitsPerSample (24));
+            writer->writeFromAudioSampleBuffer (tone, 0, tone.getNumSamples());
+        }
+
+        poman::MultitrackRecorder recorder (root);
+        recorder.prepare (sampleRate);
+        const auto opened = recorder.openSession (legacy);
+        const auto info = recorder.getTrackInfo (1);
+        expect (opened.wasOk() && info.hasAudio && info.start == 0 && info.length == 4800 && ! recorder.getTrackInfo (0).hasAudio,
+                "0.5.0 folder without session.xml opens");
+        expect (recorder.openSession (root.getChildFile ("Nope")).failed(), "missing folder is reported");
     }
 
     root.deleteRecursively();
