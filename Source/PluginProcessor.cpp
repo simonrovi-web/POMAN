@@ -213,7 +213,19 @@ void AbyssalProcessor::loadImpulseResponse (const juce::File& file)
         return;
 
     cab.loadImpulseResponse (file);
-    apvts.state.setProperty (irPathProperty, file.getFullPathName(), nullptr);
+
+    // Standalone keeps IRs inside the portable folder relative, so the folder can move between machines.
+    const auto root = abyssal::portableRoot();
+    const bool portable = wrapperType == wrapperType_Standalone && file.isAChildOf (root);
+    apvts.state.setProperty (irPathProperty, portable ? file.getRelativePathFrom (root) : file.getFullPathName(), nullptr);
+}
+
+juce::File AbyssalProcessor::resolveImpulseResponsePath (const juce::String& path) const
+{
+    if (path.isEmpty())
+        return {};
+
+    return juce::File::isAbsolutePath (path) ? juce::File (path) : abyssal::portableRoot().getChildFile (path);
 }
 
 void AbyssalProcessor::clearImpulseResponse()
@@ -225,7 +237,7 @@ void AbyssalProcessor::clearImpulseResponse()
 juce::String AbyssalProcessor::getImpulseResponseName() const
 {
     const auto path = apvts.state.getProperty (irPathProperty).toString();
-    return path.isEmpty() ? juce::String() : juce::File (path).getFileName();
+    return resolveImpulseResponsePath (path).getFileName();
 }
 
 void AbyssalProcessor::getStateInformation (juce::MemoryBlock& destData)
@@ -242,9 +254,9 @@ void AbyssalProcessor::setStateInformation (const void* data, int sizeInBytes)
 
     apvts.replaceState (juce::ValueTree::fromXml (*xml));
 
-    const auto path = apvts.state.getProperty (irPathProperty).toString();
-    if (path.isNotEmpty() && juce::File (path).existsAsFile())
-        cab.loadImpulseResponse (juce::File (path));
+    const auto file = resolveImpulseResponsePath (apvts.state.getProperty (irPathProperty).toString());
+    if (file.existsAsFile())
+        cab.loadImpulseResponse (file);
     else
         cab.clearImpulseResponse();
 }

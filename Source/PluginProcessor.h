@@ -9,6 +9,7 @@
 #include "dsp/NoiseGate.h"
 #include "dsp/Octaver.h"
 #include "dsp/Overdrive.h"
+#include "PortablePaths.h"
 
 class AbyssalProcessor : public juce::AudioProcessor
 {
@@ -49,6 +50,7 @@ public:
 
 private:
     void updateParameters();
+    juce::File resolveImpulseResponsePath (const juce::String& path) const;
     void processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
     enum class Param
     {

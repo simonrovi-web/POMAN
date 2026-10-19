@@ -31,7 +31,8 @@ juce_add_plugin(AbyssalAmp
 
 target_sources(AbyssalAmp PRIVATE
     Source/PluginProcessor.cpp
-    Source/PluginEditor.cpp)
+    Source/PluginEditor.cpp
+    Source/StandaloneApp.cpp)
 
 target_include_directories(AbyssalAmp PRIVATE Source)
 
@@ -39,7 +40,8 @@ target_compile_definitions(AbyssalAmp PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
     JUCE_VST3_CAN_REPLACE_VST2=0
-    JUCE_DISPLAY_SPLASH_SCREEN=0)
+    JUCE_DISPLAY_SPLASH_SCREEN=0
+    JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)
 
 target_link_libraries(AbyssalAmp
     PRIVATE

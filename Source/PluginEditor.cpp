@@ -96,6 +96,15 @@ void AbyssalLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& 
     g.drawRoundedRectangle (area, 4.0f, 1.0f);
 }
 
+namespace
+{
+juce::File defaultIrFolder()
+{
+    const auto bundled = abyssal::portableRoot().getChildFile ("IRs");
+    return bundled.isDirectory() ? bundled : juce::File();
+}
+} // namespace
+
 //==============================================================================
 AbyssalEditor::AbyssalEditor (AbyssalProcessor& p)
     : AudioProcessorEditor (&p), processor (p)
@@ -148,7 +157,7 @@ AbyssalEditor::AbyssalEditor (AbyssalProcessor& p)
 
     loadIrButton.onClick = [this]
     {
-        fileChooser = std::make_unique<juce::FileChooser> ("Load cabinet impulse response", juce::File(), "*.wav;*.aif;*.aiff");
+        fileChooser = std::make_unique<juce::FileChooser> ("Load cabinet impulse response", defaultIrFolder(), "*.wav;*.aif;*.aiff");
         fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                                   [this] (const juce::FileChooser& chooser)
                                   {
