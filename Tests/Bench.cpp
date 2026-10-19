@@ -44,7 +44,12 @@ float inharmonicDb (const std::vector<float>& y, double f0)
     std::vector<float> data (size * 2, 0.0f);
     const size_t offset = y.size() - size;
     for (int i = 0; i < size; ++i)
-        data[(size_t) i] = y[offset + (size_t) i] * (0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * i / (size - 1)));
+    {
+        // 4-term Blackman-Harris: sidelobes at -92 dB, so leakage cannot pass for aliasing.
+        const double a = juce::MathConstants<double>::twoPi * i / size;
+        const double w = 0.35875 - 0.48829 * std::cos (a) + 0.14128 * std::cos (2 * a) - 0.01168 * std::cos (3 * a);
+        data[(size_t) i] = (float) (y[offset + (size_t) i] * w);
+    }
     fft.performFrequencyOnlyForwardTransform (data.data());
     double harmonic = 0.0, other = 0.0;
     const double binHz = sampleRate / size;
@@ -165,35 +170,39 @@ int main()
         }));
     }
 
-    std::printf ("\nAliasing: inharmonic energy for a 3.1 kHz sine (lower is cleaner; < -60 dB is inaudible)\n");
-    const double f0 = 3100.0;
-    const int n = 1 << 16;
-    std::vector<float> sine ((size_t) n);
-    for (int i = 0; i < n; ++i)
-        sine[(size_t) i] = 0.3f * (float) std::sin (juce::MathConstants<double>::twoPi * f0 * i / sampleRate);
+    // Each f0 sits exactly on an FFT bin, so its harmonics and their aliases do too: no window leakage.
+    for (const double bins : { 683.0, 2116.0 }) // ~1 kHz (a high guitar note) and ~3.1 kHz (worst case)
+    {
+        const double f0 = bins * sampleRate / 32768.0;
+        std::printf ("\nAliasing: inharmonic energy for a %.1f Hz sine (lower is cleaner; < -60 dB is inaudible)\n", f0);
+        const int n = 1 << 16;
+        std::vector<float> sine ((size_t) n);
+        for (int i = 0; i < n; ++i)
+            sine[(size_t) i] = 0.3f * (float) std::sin (juce::MathConstants<double>::twoPi * f0 * i / sampleRate);
 
-    for (int t = 0; t < types.size(); ++t)
-    {
-        poman::Overdrive od;
-        od.prepare (sampleRate);
-        od.setParams ((poman::Overdrive::Type) t, 0.8f, 1.0f, 0.0f);
-        auto y = sine;
-        od.process (y.data(), n);
-        std::printf ("  drive %-14s %6.1f dB   (base rate)\n", types[t].toRawUTF8(), inharmonicDb (y, f0));
-    }
-    for (int m : { 0, 2, 9 })
-    {
-        poman::AmpModel amp;
-        amp.prepare (sampleRate, n);
-        poman::AmpParams p;
-        p.channel = m;
-        p.gain = 8.0f;
-        amp.setParams (p);
-        auto y = sine;
-        float* ch[] { y.data() };
-        juce::dsp::AudioBlock<float> blk (ch, 1, (size_t) n);
-        amp.process (blk);
-        std::printf ("  amp %-16s %6.1f dB   (4x oversampled)\n", models[m].toRawUTF8(), inharmonicDb (y, f0));
+        for (int t = 0; t < types.size(); ++t)
+        {
+            poman::Overdrive od;
+            od.prepare (sampleRate);
+            od.setParams ((poman::Overdrive::Type) t, 0.8f, 1.0f, 0.0f);
+            auto y = sine;
+            od.process (y.data(), n);
+            std::printf ("  drive %-14s %6.1f dB\n", types[t].toRawUTF8(), inharmonicDb (y, f0));
+        }
+        for (int m : { 0, 2, 9 })
+        {
+            poman::AmpModel amp;
+            amp.prepare (sampleRate, n);
+            poman::AmpParams p;
+            p.channel = m;
+            p.gain = 8.0f;
+            amp.setParams (p);
+            auto y = sine;
+            float* ch[] { y.data() };
+            juce::dsp::AudioBlock<float> blk (ch, 1, (size_t) n);
+            amp.process (blk);
+            std::printf ("  amp %-16s %6.1f dB\n", models[m].toRawUTF8(), inharmonicDb (y, f0));
+        }
     }
     return 0;
 }

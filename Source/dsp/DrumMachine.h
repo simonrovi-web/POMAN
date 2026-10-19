@@ -341,7 +341,7 @@ private:
             for (auto& f : *bank)
                 f.reset();
 
-        const auto setBoth = [&v] (int index, const std::array<float, 6>& c)
+        const auto setBoth = [&v] (int index, const BiquadCoeffs& c)
         {
             v.filtersL[(size_t) index].set (c);
             v.filtersR[(size_t) index].set (c);

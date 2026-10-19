@@ -172,7 +172,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     gate.prepare (sampleRate);
     octaver.prepare (sampleRate);
-    overdrive.prepare (sampleRate);
+    overdrive.prepare (sampleRate, maxChunkSize);
     amp.prepare (sampleRate, maxChunkSize);
     cab.prepare (sampleRate, maxChunkSize);
     delay.prepare (sampleRate, maxChunkSize);
@@ -190,7 +190,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (param (Param::output)));
 
     updateParameters();
-    setLatencySamples (amp.getLatencySamples());
+    setLatencySamples (amp.getLatencySamples() + overdrive.getLatencySamples()); // both oversamplers are always in the path
 }
 
 void PomanProcessor::updateParameters()

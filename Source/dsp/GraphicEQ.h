@@ -29,12 +29,12 @@ public:
     };
 
     static constexpr int numFilters = numBands + 2; // bands, low cut, high cut
-    using Design = std::array<std::array<float, 6>, numFilters>;
+    using Design = std::array<BiquadCoeffs, numFilters>;
 
     // Q of about 1.4 gives one-octave bands that overlap smoothly when neighbours move together.
     static Design designFilters (const Settings& s, double sampleRate)
     {
-        constexpr std::array<float, 6> unity { 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f };
+        constexpr BiquadCoeffs unity { 1.0, 0.0, 0.0, 1.0, 0.0, 0.0 };
         const float nyquistGuard = (float) sampleRate * 0.45f;
         Design d;
 

@@ -1,11 +1,13 @@
 #pragma once
 
 #include "DspCommon.h"
+#include <memory>
 
 namespace poman
 {
 // Drive pedal with five circuit types. Each type has its own pre-filtering, gain range,
-// clipping curve, clean blend and tone control.
+// clipping curve, clean blend and tone control. The whole circuit runs 8x oversampled: hard
+// clippers generate harmonics far above Nyquist, which at the base rate fold back as aliasing.
 class Overdrive
 {
 public:
@@ -21,17 +23,33 @@ public:
 
     static juce::StringArray typeNames() { return { "Mid Boost", "Blues Drive", "Distortion", "Fuzz", "Treble Boost" }; }
 
-    void prepare (double newSampleRate)
+    static constexpr size_t oversamplingOrder = 4; // 16x
+
+    // maxBlockSize bounds a single process() call.
+    void prepare (double hostSampleRate, int maxBlockSize = 1 << 17)
     {
-        sampleRate = newSampleRate;
+        oversampling = std::make_unique<juce::dsp::Oversampling<float>> (
+            1, oversamplingOrder, juce::dsp::Oversampling<float>::filterHalfBandPolyphaseIIR, true, false);
+        oversampling->initProcessing ((size_t) maxBlockSize);
+        sampleRate = hostSampleRate * (double) (1 << oversamplingOrder); // all filters run at the oversampled rate
         currentType = Type::count;
         lastTone = lastDrive = -1.0f;
         setParams (type, drive, 0.5f, 0.0f);
         reset();
     }
 
+    int getLatencySamples() const
+    {
+        return oversampling != nullptr ? (int) std::round (oversampling->getLatencyInSamples()) : 0;
+    }
+
     void reset()
     {
+        if (oversampling != nullptr)
+            oversampling->reset();
+        diodeClip.reset();
+        fuzzStage1.reset();
+        fuzzStage2.reset();
         for (auto* f : { &clipHighPass, &cleanHighPass, &slewLowPass, &toneLowPass, &toneHighPass, &toneShelf })
             f->reset();
     }
@@ -76,6 +94,16 @@ public:
 
     void process (float* samples, int numSamples) noexcept
     {
+        float* channels[] { samples };
+        juce::dsp::AudioBlock<float> block (channels, 1, (size_t) numSamples);
+        auto up = oversampling->processSamplesUp (block);
+        processOversampled (up.getChannelPointer (0), (int) up.getNumSamples());
+        oversampling->processSamplesDown (block);
+    }
+
+private:
+    void processOversampled (float* samples, int numSamples) noexcept
+    {
         switch (type)
         {
             case Type::midBoost:
@@ -109,8 +137,9 @@ public:
                 for (int i = 0; i < numSamples; ++i)
                 {
                     const float driven = slewLowPass (clipHighPass (samples[i]) * driveGain);
-                    // Diode pair to ground: hard knee, slightly rounded.
-                    const float clipped = driven / std::pow (1.0f + std::pow (std::abs (driven), 5.0f), 0.2f);
+                    // Silicon diode pair to ground: an exponential knee, modelled with tanh. A hard knee
+                    // would create harmonics that alias even at 8x.
+                    const float clipped = diodeClip (driven);
                     samples[i] = toneLowPass (clipped) * 0.08f * level;
                 }
                 break;
@@ -123,8 +152,8 @@ public:
                 for (int i = 0; i < numSamples; ++i)
                 {
                     float s = clipHighPass (samples[i]) * driveGain;
-                    s = std::tanh (s + bias) - offset;              // starved first transistor, asymmetric
-                    s = juce::jlimit (-0.6f, 0.6f, s * 4.0f);       // second stage slams the rails
+                    s = fuzzStage1 (s + bias) - offset;             // starved first transistor, asymmetric
+                    s = 0.6f * fuzzStage2 (s * 4.0f / 0.6f);        // second stage slams the rails
                     s = slewLowPass (s);
                     const float t = lastTone;
                     samples[i] = ((1.0f - t) * toneLowPass (s) + t * toneHighPass (s)) * 0.26f * level;
@@ -150,7 +179,6 @@ public:
         }
     }
 
-private:
     void applyTypeFilters()
     {
         switch (type)
@@ -204,7 +232,9 @@ private:
         }
     }
 
-    double sampleRate = 44100.0;
+    double sampleRate = 44100.0 * 8; // the oversampled rate
+    std::unique_ptr<juce::dsp::Oversampling<float>> oversampling;
+    AdaaTanh diodeClip, fuzzStage1, fuzzStage2; // the high-gain clippers
     Biquad clipHighPass, cleanHighPass, slewLowPass, toneLowPass, toneHighPass, toneShelf;
     Type type = Type::midBoost, currentType = Type::count;
     float drive = 0.3f, driveGain = 1.0f, level = 1.0f, lastTone = -1.0f, lastDrive = -1.0f;
