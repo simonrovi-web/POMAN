@@ -1,5 +1,7 @@
 ﻿// Offline render of every amp model and drive type: checks for NaN/silence/runaway levels
 // and prints RMS so the models can be level-matched.
+#include "dsp/Tempo.h"
+#include "dsp/Compressor.h"
 #include "dsp/AmpModel.h"
 #include "dsp/Overdrive.h"
 #include "dsp/DrumMachine.h"
@@ -417,6 +419,93 @@ int main()
             same = same && fromLegacy.getKit() == (int) DrumMachine::Kit::studio;
             failures += same ? 0 : 1;
             std::printf ("%s  %-24s\n", same ? "PASS" : "FAIL", "state round trip");
+        }
+    }
+
+    std::printf ("-- Compressor, tempo sync, tap tempo, calibration --\n");
+    {
+        const auto sineAt = [&] (float amplitude, int n)
+        {
+            std::vector<float> x ((size_t) n);
+            for (int i = 0; i < n; ++i)
+                x[(size_t) i] = amplitude * (float) std::sin (juce::MathConstants<double>::twoPi * 220.0 * i / sampleRate);
+            return x;
+        };
+        const auto run = [&] (poman::Compressor& c, std::vector<float> x)
+        {
+            for (int start = 0; start < (int) x.size(); start += blockSize)
+                c.process (x.data() + start, juce::jmin (blockSize, (int) x.size() - start));
+            return x;
+        };
+        const auto peakDb = [] (const std::vector<float>& y, size_t from)
+        {
+            float p = 0.0f;
+            for (size_t i = from; i < y.size(); ++i)
+                p = std::max (p, std::abs (y[i]));
+            return juce::Decibels::gainToDecibels (p);
+        };
+        const int n = (int) sampleRate * 2;
+
+        // Blend 0 is a true bypass of the compression (only the output trim remains).
+        {
+            poman::Compressor c;
+            c.prepare (sampleRate);
+            c.setParams (1.0f, 0.3f, 0.0f, 0.0f);
+            const auto x = sineAt (0.5f, n);
+            const auto y = run (c, x);
+            float diff = 0.0f;
+            for (size_t i = 0; i < x.size(); ++i)
+                diff = std::max (diff, std::abs (x[i] - y[i]));
+            const bool ok = diff < 1.0e-6f;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s max difference %.1e\n", ok ? "PASS" : "FAIL", "comp blend 0 = dry", diff);
+        }
+
+        // Max sustain: -40 dB threshold, 10:1, +18 dB make-up. A -6 dBFS sine should come out near
+        // -6 - 0.9*34 + 18 = -18.6 dBFS, and +6 dB more input should add only ~0.6 dB.
+        {
+            poman::Compressor c;
+            c.prepare (sampleRate);
+            c.setParams (1.0f, 0.3f, 0.0f, 1.0f);
+            const float quiet = peakDb (run (c, sineAt (0.5f, n)), (size_t) n / 2);
+            const float reduction = c.getGainReductionDb();
+            poman::Compressor c2;
+            c2.prepare (sampleRate);
+            c2.setParams (1.0f, 0.3f, 0.0f, 1.0f);
+            const float loud = peakDb (run (c2, sineAt (1.0f, n)), (size_t) n / 2);
+            const bool ok = std::abs (quiet - (-18.6f)) < 1.5f && (loud - quiet) < 1.5f && reduction < -28.0f && reduction > -33.0f;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s -6 dBFS in -> %.1f dBFS out, +6 dB in -> +%.2f dB out, GR %.1f dB\n", ok ? "PASS" : "FAIL",
+                         "comp curve and ratio", quiet, loud - quiet, reduction);
+        }
+
+        {
+            const bool ok = std::abs (poman::syncedDelayMs (120.0, 5, 999.0f) - 250.0f) < 0.01f      // 1/8 at 120
+                         && std::abs (poman::syncedDelayMs (100.0, 4, 999.0f) - 450.0f) < 0.01f      // dotted 1/8 at 100
+                         && std::abs (poman::syncedDelayMs (120.0, 6, 999.0f) - 166.667f) < 0.01f    // 1/8 triplet
+                         && poman::syncedDelayMs (40.0, 1, 999.0f) == poman::maxDelayMs              // 3 s clamps to 2 s
+                         && poman::syncedDelayMs (120.0, 0, 380.0f) == 380.0f;                        // free
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s\n", ok ? "PASS" : "FAIL", "delay note values");
+        }
+
+        {
+            poman::TapTempo tap;
+            double bpm = 0.0;
+            for (double t : { 0.0, 0.5, 1.0, 1.5 })
+                bpm = tap.tap (t);
+            const double afterPause = tap.tap (4.0); // > 2 s gap starts over
+            const double next = tap.tap (4.6);
+            const bool ok = std::abs (bpm - 120.0) < 0.01 && afterPause == 0.0 && std::abs (next - 100.0) < 0.01;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s 4 taps -> %.1f BPM, restart -> %.1f BPM\n", ok ? "PASS" : "FAIL", "tap tempo", bpm, next);
+        }
+
+        {
+            const bool ok = poman::calibrationGainDb (-21.0f) == 12.0f && poman::calibrationGainDb (-3.0f) == -6.0f
+                         && poman::calibrationGainDb (-60.0f) == 24.0f;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s -21 dB peak -> +12 dB, -3 dB -> -6 dB, clamps at +24\n", ok ? "PASS" : "FAIL", "input calibration");
         }
     }
 

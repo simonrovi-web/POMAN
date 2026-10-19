@@ -6,13 +6,14 @@ Su concepto es el de un "rig completo" en un solo plugin, con DSP, nombre e inte
 ## Cadena de señal
 
 ```
-Input → [Afinador] → Gate → Submerge (octavador) → Drive (5 tipos) → POMAN Amplifier (4x oversampling)
+Input → [Afinador] → Gate → Comp → Submerge (octavador) → Drive (5 tipos) → POMAN Amplifier (4x)
       → Hull (cabina: modelo 4x12 o IR) → Graphic EQ → Harmonizer → Mod (chorus/flanger/tremolo) → Echolocation (delay ping-pong) → Trench (reverb) → Output
 ```
 
 - **Gate**: puerta con histéresis y hold, pensada para palm mutes cerrados.
 - **Submerge**: octava abajo con divisor flip-flop y octava arriba con rectificador de onda completa.
-- **Drive** (5 tipos): Mid Boost (joroba de medios, aprieta graves), Blues Drive (transparente con mezcla limpia),
+- **Comp**: compresor feed-forward con rodilla suave de 6 dB, sustain (umbral + ratio), ataque, nivel y mezcla en paralelo.
+- **Drive** (5 tipos, 16x oversampling; Distortion y Fuzz con ADAA de primer orden): Mid Boost (joroba de medios, aprieta graves), Blues Drive (transparente con mezcla limpia),
   Distortion (recorte duro de op-amp), Fuzz (dos etapas, tono con medios recortados) y Treble Boost.
 - **POMAN Amplifier** (10 modelos): Glass Clean, Modern Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch,
   Hot Rod Lead, Hi-Gain Rect, Tight Djent y Lead 51 (alta ganancia estilo 5150, 5 etapas). Cada modelo define etapas de preamp (2-4), filtros de acoplo,
@@ -49,7 +50,9 @@ bloques de audio: suena idéntico con cualquier tamaño de buffer, tras un salto
 
 ## Extras
 
-- **Presets**: 24 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
+- **Delay** sincronizable (figuras de 1/2 a 1/16, con puntillo y tresillo) al tempo del DAW o del estudio, con tap tempo.
+- **CAL**: calibración de entrada que lleva el pico de la DI a -9 dBFS.
+- **Presets**: 25 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
 - **Afinador** YIN (31 Hz a 1,3 kHz) que silencia la salida mientras está abierto.
 - **Medidores** de entrada y salida con indicador de saturación.
 - **Audio**: ASIO y WASAPI de baja latencia; en el primer arranque elige la interfaz ASIO de hardware con el buffer más pequeño estable.
@@ -73,6 +76,8 @@ cmake --build build --config Release --target POMANTests POMANDspTests POMANReco
 build/POMANTests_artefacts/Release/POMANTests.exe        # precisión del afinador
 build/POMANDspTests_artefacts/Release/POMANDspTests.exe  # amps/drives, harmonizer, EQ, mod y caja de ritmos
 build/POMANDrumAnalysis_artefacts/Release/POMANDrumAnalysis.exe previews/drums  # mide cada voz y genera WAV
+build/POMANBench_artefacts/Release/POMANBench.exe            # CPU y aliasing por módulo
+python Tests/check_presets.py                                 # IDs de los presets de fábrica
 build/POMANRecorderTests_artefacts/Release/POMANRecorderTests.exe  # grabación, latencia, mute/solo, overdub, export, metrónomo, cuenta atrás, sesiones
 ```
 

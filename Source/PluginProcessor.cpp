@@ -66,6 +66,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout PomanProcessor::createParame
     addSwitch (layout, "gateOn", "Gate On", true);
     addFloat (layout, "gateThreshold", "Gate Threshold", { -90.0f, -20.0f, 0.1f }, -62.0f, "dB");
 
+    addSwitch (layout, "compOn", "Comp On", false);
+    addFloat (layout, "compSustain", "Comp Sustain", { 0.0f, 1.0f, 0.001f }, 0.5f);
+    addFloat (layout, "compAttack", "Comp Attack", { 0.0f, 1.0f, 0.001f }, 0.3f);
+    addFloat (layout, "compLevel", "Comp Level", { -12.0f, 12.0f, 0.1f }, 0.0f, "dB");
+    addFloat (layout, "compBlend", "Comp Blend", { 0.0f, 1.0f, 0.001f }, 1.0f);
+
     addSwitch (layout, "octOn", "Octave On", false);
     addFloat (layout, "octSub", "Octave Sub", { 0.0f, 1.0f, 0.001f }, 0.5f);
     addFloat (layout, "octUp", "Octave Up", { 0.0f, 1.0f, 0.001f }, 0.0f);
@@ -125,6 +131,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout PomanProcessor::createParame
     addFloat (layout, "dlyTime", "Delay Time", { 40.0f, 1500.0f, 1.0f, 0.5f }, 380.0f, "ms");
     addFloat (layout, "dlyFeedback", "Delay Feedback", { 0.0f, 0.9f, 0.001f }, 0.3f);
     addFloat (layout, "dlyMix", "Delay Mix", { 0.0f, 1.0f, 0.001f }, 0.25f);
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "dlySync", 1 }, "Delay Sync", poman::delayDivisionNames(), 0));
 
     addSwitch (layout, "revOn", "Reverb On", false);
     addFloat (layout, "revSize", "Reverb Size", { 0.0f, 1.0f, 0.001f }, 0.5f);
@@ -139,7 +146,7 @@ PomanProcessor::PomanProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PomanState", createParameterLayout())
 {
-    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "eqOn", "eq31", "eq63", "eq125", "eq250", "eq500", "eq1k", "eq2k", "eq4k", "eq8k", "eq16k", "eqLowCut", "eqHighCut", "eqLevel", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "modOn", "modType", "modRate", "modDepth", "modMix", "modFeedback", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "revOn", "revSize", "revMix" };
+    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "compOn", "compSustain", "compAttack", "compLevel", "compBlend", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "eqOn", "eq31", "eq63", "eq125", "eq250", "eq500", "eq1k", "eq2k", "eq4k", "eq8k", "eq16k", "eqLowCut", "eqHighCut", "eqLevel", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "modOn", "modType", "modRate", "modDepth", "modMix", "modFeedback", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "dlySync", "revOn", "revSize", "revMix" };
     static_assert (std::size (ids) == (size_t) Param::count);
 
     for (size_t i = 0; i < rawParameters.size(); ++i)
@@ -171,6 +178,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     monoBuffer.setSize (1, maxChunkSize);
 
     gate.prepare (sampleRate);
+    compressor.prepare (sampleRate);
     octaver.prepare (sampleRate);
     overdrive.prepare (sampleRate, maxChunkSize);
     amp.prepare (sampleRate, maxChunkSize);
@@ -228,7 +236,9 @@ void PomanProcessor::updateParameters()
 
     modulation.setParams ((poman::Modulation::Type) juce::jlimit (0, (int) poman::Modulation::Type::count - 1, juce::roundToInt (param (Param::modType))),
                           param (Param::modRate), param (Param::modDepth), param (Param::modMix), param (Param::modFeedback));
-    delay.setParams (param (Param::dlyTime), param (Param::dlyFeedback), param (Param::dlyMix));
+    compressor.setParams (param (Param::compSustain), param (Param::compAttack), param (Param::compLevel), param (Param::compBlend));
+    delay.setParams (poman::syncedDelayMs (getCurrentBpm(), juce::roundToInt (param (Param::dlySync)), param (Param::dlyTime)),
+                     param (Param::dlyFeedback), param (Param::dlyMix));
     reverb.setParams (param (Param::revSize), param (Param::revMix));
 }
 
@@ -244,12 +254,26 @@ poman::GraphicEQ::Settings PomanProcessor::getEqSettings() const
     return s;
 }
 
+double PomanProcessor::getCurrentBpm() const
+{
+    const double host = hostBpm.load();
+    return host > 0.0 ? host : recorder->getBpm();
+}
+
 void PomanProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
 
     for (auto ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, buffer.getNumSamples());
+
+    // In a DAW, synced effects follow the host tempo when it reports one.
+    double bpm = 0.0;
+    if (wrapperType != wrapperType_Standalone)
+        if (auto* playHead = getPlayHead())
+            if (const auto position = playHead->getPosition())
+                bpm = position->getBpm().orFallback (0.0);
+    hostBpm.store (bpm);
 
     updateParameters();
 
@@ -263,13 +287,17 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
     auto* mono = monoBuffer.getWritePointer (0);
     const int numInputs = juce::jmax (1, getTotalNumInputChannels());
 
+    float rawPeak = 0.0f;
     for (int i = 0; i < numSamples; ++i)
     {
         float sum = 0.0f;
         for (int ch = 0; ch < getTotalNumInputChannels(); ++ch)
             sum += buffer.getReadPointer (ch)[startSample + i];
-        mono[i] = sum / (float) numInputs * inputGain.getNextValue();
+        const float raw = sum / (float) numInputs;
+        rawPeak = juce::jmax (rawPeak, std::abs (raw));
+        mono[i] = raw * inputGain.getNextValue();
     }
+    for (float previous = rawInputPeak.load(); rawPeak > previous && ! rawInputPeak.compare_exchange_weak (previous, rawPeak);) {}
 
     const auto blockPeak = [] (const float* data, int n)
     {
@@ -294,6 +322,8 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
 
     if (enabled (Param::gateOn))
         gate.process (mono, numSamples);
+    if (enabled (Param::compOn))
+        compressor.process (mono, numSamples);
     if (enabled (Param::octOn))
         octaver.process (mono, numSamples);
     if (enabled (Param::odOn))

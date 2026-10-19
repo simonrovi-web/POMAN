@@ -1,8 +1,22 @@
-POMAN - Guitar Amp Suite (version portable 0.9.1)
+POMAN - Guitar Amp Suite (version portable 0.10.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.10.0
+- Sonido mas limpio en distorsion alta: los pedales de drive procesan a 16x
+  y los filtros internos van en doble precision. Menos aspereza "digital"
+  en notas agudas y solos (medido: hasta 40 dB menos de aliasing).
+- Pedal COMP (fila de arriba): SUSTAIN, ATTACK, LEVEL y BLEND (mezcla con
+  la senal limpia). Muestra la reduccion de ganancia (GR) en vivo.
+- DELAY sincronizado: elige la figura (1/4, 1/8 con puntillo, tresillo...)
+  y sigue el BPM de STUDIO/DRUMS (o el del DAW en el VST3). TAP marca el
+  tempo con clics (lo comparten STUDIO y DRUMS).
+- CAL (junto a INPUT): pulsalo y toca fuerte 5 segundos; ajusta INPUT para
+  que tu guitarra entre al nivel para el que estan disenados los
+  amplificadores. La franja verde del medidor de entrada es la zona ideal.
+- Preset nuevo: Funk Squeeze. Soaring Lead ahora usa delay en 1/8 con puntillo.
 
 Novedades 0.9.1
 - Bateria con sonido nuevo: KIT "Studio" (por defecto), modelado como un

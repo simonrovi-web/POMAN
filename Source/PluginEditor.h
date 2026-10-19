@@ -24,10 +24,13 @@ class LevelMeter : public juce::Component
 {
 public:
     void pushPeak (float peak);
+    // Marks the dB range a calibrated guitar should peak in (input meter only).
+    void setTargetZone (float lowDb, float highDb) { targetLow = lowDb; targetHigh = highDb; }
     void paint (juce::Graphics&) override;
 
 private:
     float levelDb = -100.0f;
+    float targetLow = 1.0f, targetHigh = 1.0f; // > 0 dB means no zone
     int clipHoldFrames = 0;
 };
 
@@ -132,6 +135,18 @@ private:
     juce::Label harmInfoLabel;
 
     juce::ComboBox modTypeBox;
+
+    Section* compSection = nullptr;
+    juce::Label compGrLabel;
+    Knob* delayTimeKnob = nullptr;
+    juce::ComboBox delaySyncBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> delaySyncAttachment;
+    juce::TextButton tapButton { "TAP" }, calButton { "CAL" };
+    poman::TapTempo tapTempo;
+    double tapShownUntil = 0.0, calibrationEnds = 0.0, calibrationShownUntil = 0.0;
+    float calibrationPeak = 0.0f;
+    void startCalibration();
+    void updateCalibration (double now);
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modTypeAttachment;
     std::array<Knob*, 2> modVariableKnobs {}; // mix/feedback, relabelled as shape/stereo for the tremolo
     int shownModType = -1;

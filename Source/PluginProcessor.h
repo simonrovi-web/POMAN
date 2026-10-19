@@ -6,6 +6,8 @@
 #include "dsp/Ambience.h"
 #include "dsp/AmpModel.h"
 #include "dsp/CabSim.h"
+#include "dsp/Compressor.h"
+#include "dsp/Tempo.h"
 #include "dsp/DrumMachine.h"
 #include "dsp/GraphicEQ.h"
 #include "dsp/Harmonizer.h"
@@ -68,6 +70,11 @@ public:
 
     // Peak levels since the last call (UI thread), for the meters.
     float takeInputPeak() { return inputPeak.exchange (0.0f); }
+    // Peak of the guitar DI before INPUT gain, for the input calibration.
+    float takeRawInputPeak() { return rawInputPeak.exchange (0.0f); }
+    float getCompressorGainReductionDb() const { return enabled (Param::compOn) ? compressor.getGainReductionDb() : 0.0f; }
+    // Tempo for synced effects: the host's in a DAW, otherwise the studio/drums tempo.
+    double getCurrentBpm() const;
     float takeOutputPeak() { return outputPeak.exchange (0.0f); }
 
     // While the tuner is open the output is muted, like a tuner pedal.
@@ -86,7 +93,7 @@ private:
     void processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
     enum class Param
     {
-        input, output, gateOn, gateThreshold, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, eqOn, eq31, eq63, eq125, eq250, eq500, eq1k, eq2k, eq4k, eq8k, eq16k, eqLowCut, eqHighCut, eqLevel, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, modOn, modType, modRate, modDepth, modMix, modFeedback, dlyOn, dlyTime, dlyFeedback, dlyMix, revOn, revSize, revMix,
+        input, output, gateOn, gateThreshold, compOn, compSustain, compAttack, compLevel, compBlend, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, eqOn, eq31, eq63, eq125, eq250, eq500, eq1k, eq2k, eq4k, eq8k, eq16k, eqLowCut, eqHighCut, eqLevel, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, modOn, modType, modRate, modDepth, modMix, modFeedback, dlyOn, dlyTime, dlyFeedback, dlyMix, dlySync, revOn, revSize, revMix,
         count
     };
 
@@ -96,6 +103,7 @@ private:
     std::array<std::atomic<float>*, (size_t) Param::count> rawParameters {};
 
     poman::NoiseGate gate;
+    poman::Compressor compressor;
     poman::Octaver octaver;
     poman::Overdrive overdrive;
     poman::AmpModel amp;
@@ -115,7 +123,8 @@ private:
     std::unique_ptr<poman::MultitrackRecorder> recorder;
     poman::Tuner tuner;
     std::atomic<bool> tunerActive { false };
-    std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };
+    std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f }, rawInputPeak { 0.0f };
+    std::atomic<double> hostBpm { 0.0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PomanProcessor)
 };

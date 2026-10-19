@@ -144,6 +144,14 @@ PomanEditor::PomanEditor (PomanProcessor& p)
         k->slider.setColour (juce::Slider::rotarySliderFillColourId, palette::text);
 
     gateSection = &addSection ("GATE", palette::kelp, "gateOn", { &addKnob ("gateThreshold", "THRESHOLD") });
+    compSection = &addSection ("COMP", palette::kelp, "compOn",
+                               { &addKnob ("compSustain", "SUSTAIN"), &addKnob ("compAttack", "ATTACK"),
+                                 &addKnob ("compLevel", "LEVEL"), &addKnob ("compBlend", "BLEND") });
+    compGrLabel.setJustificationType (juce::Justification::centredRight);
+    compGrLabel.setFont (juce::FontOptions (11.0f, juce::Font::bold));
+    compGrLabel.setColour (juce::Label::textColourId, palette::kelp);
+    addAndMakeVisible (compGrLabel);
+
     octaveSection = &addSection ("SUBMERGE // OCTAVE", palette::pressure, "octOn",
                 { &addKnob ("octSub", "SUB"), &addKnob ("octUp", "UP"), &addKnob ("octDry", "DRY") });
     driveSection = &addSection ("DRIVE", palette::ember, "odOn",
@@ -180,8 +188,32 @@ PomanEditor::PomanEditor (PomanProcessor& p)
                                 &addKnob ("ampDepth", "DEPTH"), &addKnob ("ampMaster", "MASTER", true) });
 
     cabSection = &addSection ("HULL // CABINET", palette::biolume, "cabOn", { &addKnob ("cabMic", "MIC POS") });
-    delaySection = &addSection ("ECHOLOCATION // DELAY", palette::pressure, "dlyOn",
-                { &addKnob ("dlyTime", "TIME"), &addKnob ("dlyFeedback", "FEEDBACK"), &addKnob ("dlyMix", "MIX") });
+    delayTimeKnob = &addKnob ("dlyTime", "TIME");
+    delaySection = &addSection ("DELAY", palette::pressure, "dlyOn",
+                { delayTimeKnob, &addKnob ("dlyFeedback", "FEEDBACK"), &addKnob ("dlyMix", "MIX") });
+    delaySyncBox.addItemList (poman::delayDivisionNames(), 1);
+    delaySyncBox.setColour (juce::ComboBox::outlineColourId, palette::pressure.withAlpha (0.6f));
+    delaySyncBox.setTooltip ("Sync the delay to the tempo (DAW tempo in a plugin, studio/drums tempo standalone)");
+    delaySyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, "dlySync", delaySyncBox);
+    addAndMakeVisible (delaySyncBox);
+
+    tapButton.setTooltip ("Tap the tempo (shared with STUDIO and DRUMS)");
+    tapButton.onClick = [this]
+    {
+        if (const double bpm = tapTempo.tap (juce::Time::getMillisecondCounterHiRes() * 0.001); bpm > 0.0)
+        {
+            processor.getRecorder().setBpm (bpm);
+            tapButton.setButtonText (juce::String (juce::roundToInt (bpm)));
+            tapShownUntil = juce::Time::getMillisecondCounterHiRes() * 0.001 + 2.0;
+        }
+    };
+    addAndMakeVisible (tapButton);
+
+    calButton.setTooltip ("Input calibration: press, then play hard for 5 seconds");
+    calButton.setColour (juce::TextButton::buttonOnColourId, palette::kelp);
+    calButton.onClick = [this] { startCalibration(); };
+    addAndMakeVisible (calButton);
+    inputMeter.setTargetZone (-12.0f, -6.0f);
     reverbSection = &addSection ("TRENCH // REVERB", palette::pressure, "revOn",
                 { &addKnob ("revSize", "SIZE"), &addKnob ("revMix", "MIX") });
 
@@ -406,6 +438,20 @@ void PomanEditor::timerCallback()
     refreshHarmonizerInfo();
     refreshModLabels();
 
+    const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
+    const float reduction = processor.getCompressorGainReductionDb();
+    compGrLabel.setText (reduction < -0.05f ? "GR " + juce::String (reduction, 1) + " dB" : juce::String(), juce::dontSendNotification);
+
+    // TIME only applies in free mode; synced delays take their time from the tempo.
+    delayTimeKnob->slider.setEnabled (delaySyncBox.getSelectedId() <= 1);
+    delayTimeKnob->slider.setAlpha (delaySyncBox.getSelectedId() <= 1 ? 1.0f : 0.35f);
+    if (tapShownUntil > 0.0 && now > tapShownUntil)
+    {
+        tapShownUntil = 0.0;
+        tapButton.setButtonText ("TAP");
+    }
+    updateCalibration (now);
+
     const auto eqSettings = processor.getEqSettings();
     const bool eqEnabled = processor.isEqEnabled();
     if (! eqCurveInitialised || eqSettings != shownEq || eqEnabled != shownEqEnabled)
@@ -516,6 +562,14 @@ void LevelMeter::paint (juce::Graphics& g)
     g.fillRoundedRectangle (area, 2.0f);
 
     const float proportion = juce::jlimit (0.0f, 1.0f, (levelDb + 60.0f) / 60.0f);
+
+    if (targetHigh <= 0.0f)
+    {
+        // Calibration target band, drawn behind the level.
+        const auto yFor = [&area] (float db) { return area.getBottom() - area.getHeight() * juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f); };
+        g.setColour (palette::kelp.withAlpha (0.25f));
+        g.fillRect (area.withTop (yFor (targetHigh)).withBottom (yFor (targetLow)));
+    }
     const auto fill = area.withTop (area.getBottom() - area.getHeight() * proportion);
     const auto colour = levelDb > -3.0f ? palette::ember : (levelDb > -12.0f ? juce::Colour (0xffffc94a) : palette::kelp);
     g.setColour (colour);
@@ -642,6 +696,47 @@ juce::String PomanEditor::intervalName (int steps) const
     return sign + names[juce::jlimit (0, 14, std::abs (steps))];
 }
 
+void PomanEditor::startCalibration()
+{
+    processor.takeRawInputPeak(); // discard anything measured before the press
+    calibrationPeak = 0.0f;
+    calibrationEnds = juce::Time::getMillisecondCounterHiRes() * 0.001 + 5.0;
+    calibrationShownUntil = 0.0;
+    calButton.setToggleState (true, juce::dontSendNotification);
+}
+
+void PomanEditor::updateCalibration (double now)
+{
+    if (calibrationEnds > 0.0)
+    {
+        calibrationPeak = juce::jmax (calibrationPeak, processor.takeRawInputPeak());
+        if (now < calibrationEnds)
+        {
+            calButton.setButtonText (juce::String ((int) std::ceil (calibrationEnds - now)));
+            return;
+        }
+
+        calibrationEnds = 0.0;
+        calButton.setToggleState (false, juce::dontSendNotification);
+        calibrationShownUntil = now + 3.0;
+        if (calibrationPeak < 1.0e-4f) // nothing played (or input muted)
+        {
+            calButton.setButtonText ("NO SIG");
+            return;
+        }
+
+        const float gainDb = poman::calibrationGainDb (juce::Decibels::gainToDecibels (calibrationPeak));
+        if (auto* input = processor.apvts.getParameter ("input"))
+            input->setValueNotifyingHost (input->convertTo0to1 (gainDb));
+        calButton.setButtonText ((gainDb >= 0.0f ? "+" : "") + juce::String (gainDb, 1));
+    }
+    else if (calibrationShownUntil > 0.0 && now > calibrationShownUntil)
+    {
+        calibrationShownUntil = 0.0;
+        calButton.setButtonText ("CAL");
+    }
+}
+
 void PomanEditor::refreshModLabels()
 {
     const int type = juce::roundToInt (processor.apvts.getRawParameterValue ("modType")->load());
@@ -760,7 +855,8 @@ void PomanEditor::resized()
     auto header = area.removeFromTop (sc (64));
     area.removeFromBottom (sc (14));
 
-    auto io = header.removeFromRight (sc (220)).reduced (0, sc (6));
+    auto io = header.removeFromRight (sc (266)).reduced (0, sc (6));
+    calButton.setBounds (io.removeFromLeft (sc (46)).withSizeKeepingCentre (sc (42), sc (26)));
     for (auto [k, meter] : { std::pair { inputKnob, &inputMeter }, std::pair { outputKnob, &outputMeter } })
     {
         auto cell = io.removeFromLeft (sc (110));
@@ -811,7 +907,7 @@ void PomanEditor::resized()
         }
     };
 
-    placeRow (pedals, { gateSection, octaveSection, driveSection }, { 1, 3, 3 });
+    placeRow (pedals, { gateSection, compSection, octaveSection, driveSection }, { 1, 3, 3, 3 });
     placeRow (ampRow, { ampSection }, { 1 });
     placeRow (eqRow, { eqSection }, { 1 });
     placeRow (harmRow, { harmonizerSection, modSection }, { 3, 2 });
@@ -828,7 +924,16 @@ void PomanEditor::resized()
             ampModelBox.setBounds (titleBar.removeFromRight (sc (240)).reduced (sc (2), sc (1)));
 
         if (s.get() == driveSection)
-            driveTypeBox.setBounds (titleBar.removeFromRight (sc (150)).reduced (sc (2), sc (1)));
+            driveTypeBox.setBounds (titleBar.removeFromRight (sc (130)).reduced (sc (2), sc (1)));
+
+        if (s.get() == compSection)
+            compGrLabel.setBounds (titleBar.removeFromRight (sc (90)));
+
+        if (s.get() == delaySection)
+        {
+            tapButton.setBounds (titleBar.removeFromRight (sc (48)).reduced (sc (2), sc (1)));
+            delaySyncBox.setBounds (titleBar.removeFromRight (sc (78)).reduced (sc (2), sc (1)));
+        }
 
         if (s.get() == eqSection)
         {
