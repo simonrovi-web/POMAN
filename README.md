@@ -7,15 +7,15 @@ Su concepto es el de un "rig completo" en un solo plugin, con DSP, nombre e inte
 
 ```
 Input → [Afinador] → Gate → Submerge (octavador) → Drive (5 tipos) → POMAN Amplifier (4x oversampling)
-      → Hull (cabina: modelo 4x12 o IR) → Harmonizer → Echolocation (delay ping-pong) → Trench (reverb) → Output
+      → Hull (cabina: modelo 4x12 o IR) → Harmonizer → Mod (chorus/flanger/tremolo) → Echolocation (delay ping-pong) → Trench (reverb) → Output
 ```
 
 - **Gate**: puerta con histéresis y hold, pensada para palm mutes cerrados.
 - **Submerge**: octava abajo con divisor flip-flop y octava arriba con rectificador de onda completa.
 - **Drive** (5 tipos): Mid Boost (joroba de medios, aprieta graves), Blues Drive (transparente con mezcla limpia),
   Distortion (recorte duro de op-amp), Fuzz (dos etapas, tono con medios recortados) y Treble Boost.
-- **POMAN Amplifier** (9 modelos): Glass Clean, Modern Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch,
-  Hot Rod Lead, Hi-Gain Rect y Tight Djent. Cada modelo define etapas de preamp (2-4), filtros de acoplo,
+- **POMAN Amplifier** (10 modelos): Glass Clean, Modern Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch,
+  Hot Rod Lead, Hi-Gain Rect, Tight Djent y Lead 51 (alta ganancia estilo 5150, 5 etapas). Cada modelo define etapas de preamp (2-4), filtros de acoplo,
   stack de tonos propio (frecuencias y voz de medios), sag y presencia. Las etapas no lineales van a 4x oversampling.
 - **Hull**: modelo de cabina por filtros, con un control de posición del micrófono, o carga de un IR propio en `.wav`/`.aif`.
 
@@ -33,9 +33,12 @@ del plugin) y exportación de la mezcla. Las tomas se escriben en disco desde un
 (`ThreadedWriter`) como WAV de 24 bits en `Recordings/Session <fecha>/`; el hilo de audio no se bloquea nunca.
 En el VST3 la página no aparece: ahí graba el DAW.
 
+- **Mod**: chorus (7-21 ms, seno, estéreo en cuadratura), flanger (0,3-4,3 ms, triángulo, realimentación
+  limitada con tanh para que sea estable) y tremolo (forma seno-cuadrada y desfase estéreo hasta auto-pan).
+
 ## Extras
 
-- **Presets**: 18 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
+- **Presets**: 23 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
 - **Afinador** YIN (31 Hz a 1,3 kHz) que silencia la salida mientras está abierto.
 - **Medidores** de entrada y salida con indicador de saturación.
 - **Audio**: ASIO y WASAPI de baja latencia; en el primer arranque elige la interfaz ASIO de hardware con el buffer más pequeño estable.

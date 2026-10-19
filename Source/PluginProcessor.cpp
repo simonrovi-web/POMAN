@@ -26,6 +26,8 @@ void addFloat (Layout& layout, const char* id, const char* name, NormalisableRan
             return juce::String (juce::roundToInt (value)) + " ms";
         if (label == "dB")
             return juce::String (value, 1) + " dB";
+        if (label == "Hz")
+            return juce::String (value, 2) + " Hz";
         return juce::String (value, 1);
     };
     auto fromText = [normalised] (const juce::String& text)
@@ -98,6 +100,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout PomanProcessor::createParame
     addFloat (layout, "harmV2Level", "Voice 2 Level", { 0.0f, 1.0f, 0.001f }, 0.0f);
     addFloat (layout, "harmDry", "Harmonizer Dry", { 0.0f, 1.0f, 0.001f }, 1.0f);
 
+    addSwitch (layout, "modOn", "Mod On", false);
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "modType", 1 }, "Mod Type", poman::Modulation::typeNames(), 0));
+    addFloat (layout, "modRate", "Mod Rate", { 0.05f, 10.0f, 0.01f, 0.4f }, 0.8f, "Hz");
+    addFloat (layout, "modDepth", "Mod Depth", { 0.0f, 1.0f, 0.001f }, 0.5f);
+    // For the tremolo these two act as wave shape and stereo spread (see Modulation).
+    addFloat (layout, "modMix", "Mod Mix / Shape", { 0.0f, 1.0f, 0.001f }, 0.5f);
+    addFloat (layout, "modFeedback", "Mod Feedback / Stereo", { 0.0f, 1.0f, 0.001f }, 0.3f);
+
     addSwitch (layout, "dlyOn", "Delay On", false);
     addFloat (layout, "dlyTime", "Delay Time", { 40.0f, 1500.0f, 1.0f, 0.5f }, 380.0f, "ms");
     addFloat (layout, "dlyFeedback", "Delay Feedback", { 0.0f, 0.9f, 0.001f }, 0.3f);
@@ -116,7 +126,7 @@ PomanProcessor::PomanProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PomanState", createParameterLayout())
 {
-    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "revOn", "revSize", "revMix" };
+    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "modOn", "modType", "modRate", "modDepth", "modMix", "modFeedback", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "revOn", "revSize", "revMix" };
     static_assert (std::size (ids) == (size_t) Param::count);
 
     for (size_t i = 0; i < rawParameters.size(); ++i)
@@ -155,6 +165,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     delay.prepare (sampleRate, maxChunkSize);
     reverb.prepare (sampleRate, maxChunkSize);
     harmonizer.prepare (sampleRate);
+    modulation.prepare (sampleRate, maxChunkSize);
     recorder->prepare (sampleRate);
     tuner.prepare (sampleRate);
 
@@ -198,6 +209,9 @@ void PomanProcessor::updateParameters()
     harmParams.level = { param (Param::harmV1Level), param (Param::harmV2Level) };
     harmParams.dry = param (Param::harmDry);
     harmonizer.setParams (harmParams);
+
+    modulation.setParams ((poman::Modulation::Type) juce::jlimit (0, (int) poman::Modulation::Type::count - 1, juce::roundToInt (param (Param::modType))),
+                          param (Param::modRate), param (Param::modDepth), param (Param::modMix), param (Param::modFeedback));
     delay.setParams (param (Param::dlyTime), param (Param::dlyFeedback), param (Param::dlyMix));
     reverb.setParams (param (Param::revSize), param (Param::revMix));
 }
@@ -274,6 +288,9 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
         juce::FloatVectorOperations::copy (left, mono, numSamples);
         juce::FloatVectorOperations::copy (right, mono, numSamples);
     }
+
+    if (enabled (Param::modOn))
+        modulation.process (left, right, numSamples);
 
     if (enabled (Param::dlyOn))
         delay.process (left, right, numSamples);

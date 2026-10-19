@@ -1,8 +1,18 @@
-POMAN - Guitar Amp Suite (version portable 0.6.0)
+POMAN - Guitar Amp Suite (version portable 0.7.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.7.0
+- Pedal MOD (seccion rosa, junto al harmonizer) con 3 efectos:
+  * Chorus: RATE, DEPTH, MIX y FDBK (realimentacion). Estereo.
+  * Flanger: igual, con FDBK alto suena a "avion a reaccion".
+  * Tremolo: RATE, DEPTH, SHAPE (de onda suave a cortada) y STEREO
+    (0 = pulso mono, al maximo = el sonido va de un lado a otro).
+- Amplificador nuevo "Lead 51": alta ganancia al estilo 5150, 5 etapas de
+  saturacion, graves apretados y medios-agudos agresivos.
+- Presets nuevos: 51 Chug, 51 Lead, Chorus Clean, Jet Flanger, Surf Tremolo.
 
 Novedades 0.6.0
 - COUNT-IN (activado por defecto): al pulsar REC suena 1 compas de clic

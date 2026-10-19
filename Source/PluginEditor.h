@@ -88,6 +88,7 @@ private:
     Section* cabSection = nullptr;
     Section* driveSection = nullptr;
     Section* harmonizerSection = nullptr;
+    Section* modSection = nullptr;
 
     Knob* inputKnob = nullptr;
     Knob* outputKnob = nullptr;
@@ -99,6 +100,12 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> harmModeAttachment, harmKeyAttachment, harmScaleAttachment;
     std::array<Knob*, 2> harmIntervalKnobs {};
     juce::Label harmInfoLabel;
+
+    juce::ComboBox modTypeBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modTypeAttachment;
+    std::array<Knob*, 2> modVariableKnobs {}; // mix/feedback, relabelled as shape/stereo for the tremolo
+    int shownModType = -1;
+    void refreshModLabels();
     bool shownDiatonic = true;
     int shownScale = -1;
 

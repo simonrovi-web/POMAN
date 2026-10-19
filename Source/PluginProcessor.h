@@ -7,6 +7,7 @@
 #include "dsp/AmpModel.h"
 #include "dsp/CabSim.h"
 #include "dsp/Harmonizer.h"
+#include "dsp/Modulation.h"
 #include "dsp/NoiseGate.h"
 #include "dsp/Octaver.h"
 #include "dsp/Overdrive.h"
@@ -76,7 +77,7 @@ private:
     void processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
     enum class Param
     {
-        input, output, gateOn, gateThreshold, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, dlyOn, dlyTime, dlyFeedback, dlyMix, revOn, revSize, revMix,
+        input, output, gateOn, gateThreshold, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, modOn, modType, modRate, modDepth, modMix, modFeedback, dlyOn, dlyTime, dlyFeedback, dlyMix, revOn, revSize, revMix,
         count
     };
 
@@ -91,6 +92,7 @@ private:
     poman::AmpModel amp;
     poman::CabSim cab;
     poman::Harmonizer harmonizer;
+    poman::Modulation modulation;
     poman::PingPongDelay delay;
     poman::Ambience reverb;
 

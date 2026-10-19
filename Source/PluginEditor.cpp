@@ -135,6 +135,14 @@ PomanEditor::PomanEditor (PomanProcessor& p)
                                      { harmIntervalKnobs[0], &addKnob ("harmV1Level", "V1 LEVEL"),
                                        harmIntervalKnobs[1], &addKnob ("harmV2Level", "V2 LEVEL"), &addKnob ("harmDry", "DRY") });
 
+    modVariableKnobs = { &addKnob ("modMix", "MIX"), &addKnob ("modFeedback", "FDBK") };
+    modSection = &addSection ("MOD", palette::coral, "modOn",
+                              { &addKnob ("modRate", "RATE"), &addKnob ("modDepth", "DEPTH"), modVariableKnobs[0], modVariableKnobs[1] });
+    modTypeBox.addItemList (poman::Modulation::typeNames(), 1);
+    modTypeBox.setColour (juce::ComboBox::outlineColourId, palette::coral.withAlpha (0.6f));
+    modTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, "modType", modTypeBox);
+    addAndMakeVisible (modTypeBox);
+
     // Interval knobs read as musical intervals; their meaning follows the mode (degrees vs semitones).
     for (auto* k : harmIntervalKnobs)
     {
@@ -334,6 +342,7 @@ void PomanEditor::timerCallback()
         tunerDisplay.setReading (processor.analyseTuner());
 
     refreshHarmonizerInfo();
+    refreshModLabels();
 
     // Session restores and host preset changes can swap the state underneath the editor.
     if (processor.getPresetManager().getCurrentName() != shownPresetName)
@@ -494,6 +503,18 @@ juce::String PomanEditor::intervalName (int steps) const
     return sign + names[juce::jlimit (0, 14, std::abs (steps))];
 }
 
+void PomanEditor::refreshModLabels()
+{
+    const int type = juce::roundToInt (processor.apvts.getRawParameterValue ("modType")->load());
+    if (type == shownModType)
+        return;
+
+    shownModType = type;
+    const bool tremolo = type == (int) poman::Modulation::Type::tremolo;
+    modVariableKnobs[0]->label.setText (tremolo ? "SHAPE" : "MIX", juce::dontSendNotification);
+    modVariableKnobs[1]->label.setText (tremolo ? "STEREO" : "FDBK", juce::dontSendNotification);
+}
+
 void PomanEditor::refreshHarmonizerInfo()
 {
     const bool diatonic = processor.apvts.getRawParameterValue ("harmMode")->load() > 0.5f;
@@ -649,7 +670,7 @@ void PomanEditor::resized()
 
     placeRow (pedals, { sections[0].get(), sections[1].get(), sections[2].get() }, { 1, 3, 3 });
     placeRow (ampRow, { ampSection }, { 1 });
-    placeRow (harmRow, { harmonizerSection }, { 1 });
+    placeRow (harmRow, { harmonizerSection, modSection }, { 3, 2 });
     placeRow (fxRow, { cabSection, sections[5].get(), sections[6].get() }, { 3, 3, 2 });
 
     for (auto& s : sections)
@@ -665,12 +686,15 @@ void PomanEditor::resized()
         if (s.get() == driveSection)
             driveTypeBox.setBounds (titleBar.removeFromRight (sc (150)).reduced (sc (2), sc (1)));
 
+        if (s.get() == modSection)
+            modTypeBox.setBounds (titleBar.removeFromRight (sc (120)).reduced (sc (2), sc (1)));
+
         if (s.get() == harmonizerSection)
         {
-            harmScaleBox.setBounds (titleBar.removeFromRight (sc (170)).reduced (sc (2), sc (1)));
+            harmScaleBox.setBounds (titleBar.removeFromRight (sc (150)).reduced (sc (2), sc (1)));
             harmKeyBox.setBounds (titleBar.removeFromRight (sc (70)).reduced (sc (2), sc (1)));
-            harmModeBox.setBounds (titleBar.removeFromRight (sc (120)).reduced (sc (2), sc (1)));
-            harmInfoLabel.setBounds (inner.removeFromRight (sc (330)).reduced (sc (8), sc (26)));
+            harmModeBox.setBounds (titleBar.removeFromRight (sc (110)).reduced (sc (2), sc (1)));
+            harmInfoLabel.setBounds (inner.removeFromRight (sc (150)).reduced (sc (6), sc (22)));
         }
 
         if (s.get() == cabSection)

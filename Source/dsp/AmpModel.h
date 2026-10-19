@@ -18,13 +18,13 @@ struct AmpParams
 class AmpModel
 {
 public:
-    static constexpr int maxStages = 4;
+    static constexpr int maxStages = 5;
 
     // Indices 0-2 are the original Clean/Rhythm/Lead channels; keep the order so saved states stay valid.
     static juce::StringArray modelNames()
     {
         return { "Glass Clean", "Modern Rhythm", "Modern Lead", "US Clean", "Chime Class A",
-                 "Brit Crunch", "Hot Rod Lead", "Hi-Gain Rect", "Tight Djent" };
+                 "Brit Crunch", "Hot Rod Lead", "Hi-Gain Rect", "Tight Djent", "Lead 51" };
     }
 
     void prepare (double newSampleRate, int maxBlockSize)
@@ -159,7 +159,7 @@ private:
 
     // stages | in HP, pre-shape Hz/dB, bright dB | gain min/max, bias | coupling, miller, trim
     //        | bass Hz, mid Hz, mid Q, treble Hz, mid offset dB | sag, presence Hz
-    static constexpr std::array<Voicing, 9> voicings { {
+    static constexpr std::array<Voicing, 10> voicings { {
         // Glass Clean: two glassy stages, firm power amp.
         { 2, 50.0f, 800.0f, 0.0f, 4.0f, 1.5f, 8.0f, 0.06f, 25.0f, 12000.0f, 0.9f, 110.0f, 650.0f, 0.9f, 3000.0f, 0.0f, 0.3f, 4500.0f },
         // Modern Rhythm: tight, scooped-ready crunch.
@@ -178,6 +178,9 @@ private:
         { 4, 70.0f, 500.0f, -2.0f, 2.0f, 25.0f, 700.0f, 0.25f, 30.0f, 7500.0f, 0.55f, 80.0f, 600.0f, 0.7f, 3200.0f, -4.0f, 0.5f, 4800.0f },
         // Tight Djent: very tight low end, fast attack, almost no sag.
         { 4, 160.0f, 1200.0f, 3.0f, 3.0f, 30.0f, 800.0f, 0.18f, 90.0f, 9000.0f, 0.55f, 100.0f, 1000.0f, 1.0f, 3500.0f, 0.0f, 0.15f, 5500.0f },
+        // Lead 51: 5150-style lead channel. Five cascaded cold-clipping stages, tight input, a hard
+        // 1.5 kHz push with the fizz rolled off, slightly scooped stack and a firm power section.
+        { 5, 105.0f, 1500.0f, 4.0f, 2.0f, 40.0f, 1200.0f, 0.30f, 70.0f, 6000.0f, 0.5f, 100.0f, 700.0f, 0.8f, 3000.0f, -2.0f, 0.25f, 4000.0f },
     } };
 
     void applyVoicing (int channel)

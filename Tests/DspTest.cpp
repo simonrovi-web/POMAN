@@ -3,6 +3,7 @@
 #include "dsp/AmpModel.h"
 #include "dsp/Overdrive.h"
 #include "dsp/Harmonizer.h"
+#include "dsp/Modulation.h"
 #include <algorithm>
 #include <cstdio>
 
@@ -163,6 +164,62 @@ int main()
         const bool ok = std::abs (cents) < 5.0f;
         failures += ok ? 0 : 1;
         std::printf ("%s  %-24s out %7.2f Hz  expected %7.2f Hz  (%+.1f cents)\n", ok ? "PASS" : "FAIL", c.label, outHz, c.expectedHz, cents);
+    }
+
+    std::printf ("-- Modulation --\n");
+    {
+        const int total = (int) sampleRate * 3;
+        const auto sine = [&] (int i) { return 0.3f * (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * i / sampleRate); };
+        const auto render = [&] (poman::Modulation::Type type, float rate, float depth, float mix, float fb, auto&& source)
+        {
+            poman::Modulation mod;
+            mod.prepare (sampleRate, blockSize);
+            mod.setParams (type, rate, depth, mix, fb);
+            juce::AudioBuffer<float> buf (2, total);
+            for (int i = 0; i < total; ++i)
+                buf.setSample (0, i, source (i)), buf.setSample (1, i, source (i));
+            for (int start = 0; start < total; start += blockSize)
+                mod.process (buf.getWritePointer (0, start), buf.getWritePointer (1, start), juce::jmin (blockSize, total - start));
+            return buf;
+        };
+        const auto finite = [] (const juce::AudioBuffer<float>& b)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < b.getNumSamples(); ++i)
+                    if (! std::isfinite (b.getSample (ch, i)))
+                        return false;
+            return true;
+        };
+        const float inRms = 0.3f / std::sqrt (2.0f);
+
+        for (auto [type, name] : { std::pair { poman::Modulation::Type::chorus, "chorus" }, std::pair { poman::Modulation::Type::flanger, "flanger" } })
+        {
+            auto out = render (type, 0.8f, 0.6f, 0.5f, 0.3f, sine);
+            const float rmsDb = juce::Decibels::gainToDecibels (out.getRMSLevel (0, 4800, total - 4800) / inRms);
+            float maxDiff = 0.0f;
+            for (int i = 4800; i < total; ++i)
+                maxDiff = std::max (maxDiff, std::abs (out.getSample (0, i) - out.getSample (1, i)));
+            const bool ok = finite (out) && std::abs (rmsDb) < 4.0f && maxDiff > 0.01f;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s level %+5.1f dB vs dry, L/R differ by up to %.2f\n", ok ? "PASS" : "FAIL", name, rmsDb, maxDiff);
+        }
+
+        juce::Random rng (7);
+        auto worst = render (poman::Modulation::Type::flanger, 0.1f, 1.0f, 1.0f, 1.0f, [&] (int) { return 0.5f * (rng.nextFloat() * 2.0f - 1.0f); });
+        const float worstPeak = worst.getMagnitude (0, 0, total);
+        const bool stable = finite (worst) && worstPeak < 3.0f;
+        failures += stable ? 0 : 1;
+        std::printf ("%s  %-24s peak %.2f with max feedback on noise\n", stable ? "PASS" : "FAIL", "flanger stability", worstPeak);
+
+        auto trem = render (poman::Modulation::Type::tremolo, 5.0f, 1.0f, 0.0f, 1.0f, [] (int) { return 0.5f; });
+        const auto range = juce::FloatVectorOperations::findMinAndMax (trem.getReadPointer (0, 9600), total - 9600);
+        float sumSpread = 0.0f;
+        for (int i = 9600; i < total; ++i)
+            sumSpread = std::max (sumSpread, std::abs (trem.getSample (0, i) + trem.getSample (1, i) - 0.5f));
+        const bool tremOk = range.getStart() < 0.01f && range.getEnd() > 0.49f && sumSpread < 0.02f;
+        failures += tremOk ? 0 : 1;
+        std::printf ("%s  %-24s gain %.3f..%.3f, auto-pan L+R constant within %.3f\n", tremOk ? "PASS" : "FAIL", "tremolo depth/stereo",
+                     range.getStart() * 2.0f, range.getEnd() * 2.0f, sumSpread);
     }
 
     return failures;
