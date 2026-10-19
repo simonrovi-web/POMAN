@@ -2,3 +2,5 @@ build/
 external/
 .vs/
 *.user
+dist/
+*.zip
