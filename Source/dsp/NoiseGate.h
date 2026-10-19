@@ -2,7 +2,7 @@
 
 #include "DspCommon.h"
 
-namespace abyssal
+namespace poman
 {
 // Hysteresis gate with hold, tuned for tight palm-muted riffing.
 class NoiseGate
@@ -69,4 +69,4 @@ private:
     int holdSamples = 0, holdCounter = 0;
     bool open = false;
 };
-} // namespace abyssal
+} // namespace poman

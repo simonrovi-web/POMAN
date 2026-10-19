@@ -2,7 +2,7 @@
 
 #include "DspCommon.h"
 
-namespace abyssal
+namespace poman
 {
 // Mid-hump boost/overdrive: only the high-passed band is clipped and summed back with the clean signal,
 // which tightens the low end before the amp.
@@ -59,4 +59,4 @@ private:
     Biquad clipHighPass, cleanHighPass, toneLowPass;
     float drive = 0.3f, driveGain = 1.0f, level = 1.0f, lastTone = -1.0f;
 };
-} // namespace abyssal
+} // namespace poman

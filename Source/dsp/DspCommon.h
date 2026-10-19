@@ -4,7 +4,7 @@
 #include <array>
 #include <cmath>
 
-namespace abyssal
+namespace poman
 {
 using ArrayCoeffs = juce::dsp::IIR::ArrayCoefficients<float>;
 
@@ -29,4 +29,4 @@ inline float dbToGain (float db) { return juce::Decibels::decibelsToGain (db); }
 
 // Knob 0..10 with 5 as flat, mapped to +/- rangeDb.
 inline float knobToDb (float knob, float rangeDb) { return (knob - 5.0f) / 5.0f * rangeDb; }
-} // namespace abyssal
+} // namespace poman

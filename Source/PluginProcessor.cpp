@@ -14,8 +14,31 @@ using juce::ParameterID;
 
 void addFloat (Layout& layout, const char* id, const char* name, NormalisableRange<float> range, float defaultValue, const char* unit = "")
 {
+    const juce::String label (unit);
+    const bool normalised = label.isEmpty() && range.start == 0.0f && range.end <= 1.0f;
+
+    // Text shown on knobs and in hosts: percentages for 0..1 amounts, units elsewhere.
+    auto toText = [label, normalised] (float value, int)
+    {
+        if (normalised)
+            return juce::String (juce::roundToInt (value * 100.0f)) + " %";
+        if (label == "ms")
+            return juce::String (juce::roundToInt (value)) + " ms";
+        if (label == "dB")
+            return juce::String (value, 1) + " dB";
+        return juce::String (value, 1);
+    };
+    auto fromText = [normalised] (const juce::String& text)
+    {
+        const float value = text.retainCharacters ("-0123456789.").getFloatValue();
+        return normalised ? value / 100.0f : value;
+    };
+
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id, 1 }, name, range, defaultValue,
-                                                       juce::AudioParameterFloatAttributes().withLabel (unit)));
+                                                       juce::AudioParameterFloatAttributes()
+                                                           .withLabel (normalised ? "%" : unit)
+                                                           .withStringFromValueFunction (toText)
+                                                           .withValueFromStringFunction (fromText)));
 }
 
 void addKnob (Layout& layout, const char* id, const char* name, float defaultValue)
@@ -29,7 +52,7 @@ void addSwitch (Layout& layout, const char* id, const char* name, bool defaultVa
 }
 } // namespace
 
-juce::AudioProcessorValueTreeState::ParameterLayout AbyssalProcessor::createParameterLayout()
+juce::AudioProcessorValueTreeState::ParameterLayout PomanProcessor::createParameterLayout()
 {
     Layout layout;
 
@@ -74,11 +97,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout AbyssalProcessor::createPara
     return layout;
 }
 
-AbyssalProcessor::AbyssalProcessor()
+PomanProcessor::PomanProcessor()
     : AudioProcessor (BusesProperties()
                           .withInput ("Input", juce::AudioChannelSet::stereo(), true)
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "AbyssalState", createParameterLayout())
+      apvts (*this, nullptr, "PomanState", createParameterLayout())
 {
     static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "octOn", "octSub", "octUp", "octDry", "odOn", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "revOn", "revSize", "revMix" };
     static_assert (std::size (ids) == (size_t) Param::count);
@@ -88,16 +111,19 @@ AbyssalProcessor::AbyssalProcessor()
         rawParameters[i] = apvts.getRawParameterValue (ids[i]);
         jassert (rawParameters[i] != nullptr);
     }
+
+    presetManager = std::make_unique<poman::PresetManager> (
+        apvts, wrapperType == wrapperType_Standalone, [this] (const juce::ValueTree& state) { applyState (state); });
 }
 
-bool AbyssalProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+bool PomanProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
     const auto in = layouts.getMainInputChannelSet();
     return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
         && (in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo());
 }
 
-void AbyssalProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     maxChunkSize = juce::jmax (32, samplesPerBlock);
     monoBuffer.setSize (1, maxChunkSize);
@@ -109,6 +135,7 @@ void AbyssalProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     cab.prepare (sampleRate, maxChunkSize);
     delay.prepare (sampleRate, maxChunkSize);
     reverb.prepare (sampleRate, maxChunkSize);
+    tuner.prepare (sampleRate);
 
     inputGain.reset (sampleRate, 0.03);
     outputGain.reset (sampleRate, 0.03);
@@ -119,7 +146,7 @@ void AbyssalProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     setLatencySamples (amp.getLatencySamples());
 }
 
-void AbyssalProcessor::updateParameters()
+void PomanProcessor::updateParameters()
 {
     inputGain.setTargetValue (juce::Decibels::decibelsToGain (param (Param::input)));
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (param (Param::output)));
@@ -128,7 +155,7 @@ void AbyssalProcessor::updateParameters()
     octaver.setMix (param (Param::octSub), param (Param::octUp), param (Param::octDry));
     overdrive.setParams (param (Param::odDrive), param (Param::odTone), param (Param::odLevel));
 
-    abyssal::AmpParams ampParams;
+    poman::AmpParams ampParams;
     ampParams.channel = (int) param (Param::ampChannel);
     ampParams.gain = param (Param::ampGain);
     ampParams.bass = param (Param::ampBass);
@@ -144,7 +171,7 @@ void AbyssalProcessor::updateParameters()
     reverb.setParams (param (Param::revSize), param (Param::revMix));
 }
 
-void AbyssalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void PomanProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
 {
     juce::ScopedNoDenormals noDenormals;
 
@@ -157,7 +184,7 @@ void AbyssalProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
         processChunk (buffer, start, juce::jmin (maxChunkSize, buffer.getNumSamples() - start));
 }
 
-void AbyssalProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples)
+void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples)
 {
     // Guitar is mono: sum the inputs, run the rig, then widen with the stereo effects.
     auto* mono = monoBuffer.getWritePointer (0);
@@ -170,6 +197,23 @@ void AbyssalProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start
             sum += buffer.getReadPointer (ch)[startSample + i];
         mono[i] = sum / (float) numInputs * inputGain.getNextValue();
     }
+
+    const auto blockPeak = [] (const float* data, int n)
+    {
+        const auto range = juce::FloatVectorOperations::findMinAndMax (data, n);
+        return juce::jmax (-range.getStart(), range.getEnd());
+    };
+    const auto storePeak = [] (std::atomic<float>& peak, float value)
+    {
+        float previous = peak.load();
+        while (value > previous && ! peak.compare_exchange_weak (previous, value)) {}
+    };
+
+    storePeak (inputPeak, blockPeak (mono, numSamples));
+
+    const bool tunerOn = tunerActive.load();
+    if (tunerOn)
+        tuner.push (mono, numSamples);
 
     if (enabled (Param::gateOn))
         gate.process (mono, numSamples);
@@ -205,9 +249,17 @@ void AbyssalProcessor::processChunk (juce::AudioBuffer<float>& buffer, int start
         left[i] *= g;
         right[i] *= g;
     }
+
+    if (tunerOn)
+    {
+        juce::FloatVectorOperations::clear (left, numSamples);
+        juce::FloatVectorOperations::clear (right, numSamples);
+    }
+
+    storePeak (outputPeak, juce::jmax (blockPeak (left, numSamples), blockPeak (right, numSamples)));
 }
 
-void AbyssalProcessor::loadImpulseResponse (const juce::File& file)
+void PomanProcessor::loadImpulseResponse (const juce::File& file)
 {
     if (! file.existsAsFile())
         return;
@@ -215,44 +267,49 @@ void AbyssalProcessor::loadImpulseResponse (const juce::File& file)
     cab.loadImpulseResponse (file);
 
     // Standalone keeps IRs inside the portable folder relative, so the folder can move between machines.
-    const auto root = abyssal::portableRoot();
+    const auto root = poman::portableRoot();
     const bool portable = wrapperType == wrapperType_Standalone && file.isAChildOf (root);
     apvts.state.setProperty (irPathProperty, portable ? file.getRelativePathFrom (root) : file.getFullPathName(), nullptr);
 }
 
-juce::File AbyssalProcessor::resolveImpulseResponsePath (const juce::String& path) const
+juce::File PomanProcessor::resolveImpulseResponsePath (const juce::String& path) const
 {
     if (path.isEmpty())
         return {};
 
-    return juce::File::isAbsolutePath (path) ? juce::File (path) : abyssal::portableRoot().getChildFile (path);
+    return juce::File::isAbsolutePath (path) ? juce::File (path) : poman::portableRoot().getChildFile (path);
 }
 
-void AbyssalProcessor::clearImpulseResponse()
+void PomanProcessor::clearImpulseResponse()
 {
     cab.clearImpulseResponse();
     apvts.state.removeProperty (irPathProperty, nullptr);
 }
 
-juce::String AbyssalProcessor::getImpulseResponseName() const
+juce::String PomanProcessor::getImpulseResponseName() const
 {
     const auto path = apvts.state.getProperty (irPathProperty).toString();
     return resolveImpulseResponsePath (path).getFileName();
 }
 
-void AbyssalProcessor::getStateInformation (juce::MemoryBlock& destData)
+void PomanProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     if (auto xml = apvts.copyState().createXml())
         copyXmlToBinary (*xml, destData);
 }
 
-void AbyssalProcessor::setStateInformation (const void* data, int sizeInBytes)
+void PomanProcessor::setStateInformation (const void* data, int sizeInBytes)
 {
     const auto xml = getXmlFromBinary (data, sizeInBytes);
     if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
         return;
 
-    apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    applyState (juce::ValueTree::fromXml (*xml));
+}
+
+void PomanProcessor::applyState (const juce::ValueTree& state)
+{
+    apvts.replaceState (state.createCopy());
 
     const auto file = resolveImpulseResponsePath (apvts.state.getProperty (irPathProperty).toString());
     if (file.existsAsFile())
@@ -261,12 +318,12 @@ void AbyssalProcessor::setStateInformation (const void* data, int sizeInBytes)
         cab.clearImpulseResponse();
 }
 
-juce::AudioProcessorEditor* AbyssalProcessor::createEditor()
+juce::AudioProcessorEditor* PomanProcessor::createEditor()
 {
-    return new AbyssalEditor (*this);
+    return new PomanEditor (*this);
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
-    return new AbyssalProcessor();
+    return new PomanProcessor();
 }

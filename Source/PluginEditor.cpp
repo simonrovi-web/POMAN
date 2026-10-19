@@ -17,7 +17,7 @@ const juce::Colour kelp { 0xffa3e05a };
 } // namespace palette
 
 //==============================================================================
-AbyssalLookAndFeel::AbyssalLookAndFeel()
+PomanLookAndFeel::PomanLookAndFeel()
 {
     setColour (juce::Slider::textBoxTextColourId, palette::text);
     setColour (juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
@@ -26,7 +26,7 @@ AbyssalLookAndFeel::AbyssalLookAndFeel()
     setColour (juce::TextButton::textColourOnId, palette::abyss);
 }
 
-void AbyssalLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
+void PomanLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
                                            float startAngle, float endAngle, juce::Slider& slider)
 {
     const auto accent = slider.findColour (juce::Slider::rotarySliderFillColourId);
@@ -63,7 +63,7 @@ void AbyssalLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int 
     g.fillPath (pointer, juce::AffineTransform::rotation (angle).translated (centre));
 }
 
-void AbyssalLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button, bool highlighted, bool)
+void PomanLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button, bool highlighted, bool)
 {
     const auto accent = button.findColour (juce::ToggleButton::tickColourId);
     const auto area = button.getLocalBounds().toFloat().reduced (2.0f);
@@ -83,7 +83,7 @@ void AbyssalLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton
     g.drawEllipse (led, 1.2f);
 }
 
-void AbyssalLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button, const juce::Colour&,
+void PomanLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button, const juce::Colour&,
                                                bool highlighted, bool down)
 {
     const auto area = button.getLocalBounds().toFloat().reduced (1.0f);
@@ -100,13 +100,13 @@ namespace
 {
 juce::File defaultIrFolder()
 {
-    const auto bundled = abyssal::portableRoot().getChildFile ("IRs");
+    const auto bundled = poman::portableRoot().getChildFile ("IRs");
     return bundled.isDirectory() ? bundled : juce::File();
 }
 } // namespace
 
 //==============================================================================
-AbyssalEditor::AbyssalEditor (AbyssalProcessor& p)
+PomanEditor::PomanEditor (PomanProcessor& p)
     : AudioProcessorEditor (&p), processor (p)
 {
     setLookAndFeel (&lookAndFeel);
@@ -122,7 +122,7 @@ AbyssalEditor::AbyssalEditor (AbyssalProcessor& p)
     addSection ("RIPTIDE // DRIVE", palette::ember, "odOn",
                 { &addKnob ("odDrive", "DRIVE"), &addKnob ("odTone", "TONE"), &addKnob ("odLevel", "LEVEL") });
 
-    ampSection = &addSection ("LEVIATHAN AMPLIFIER", palette::biolume, {},
+    ampSection = &addSection ("POMAN AMPLIFIER", palette::biolume, {},
                               { &addKnob ("ampGain", "GAIN", true), &addKnob ("ampBass", "BASS"), &addKnob ("ampMid", "MID"),
                                 &addKnob ("ampTreble", "TREBLE"), &addKnob ("ampPresence", "PRESENCE"),
                                 &addKnob ("ampDepth", "DEPTH"), &addKnob ("ampMaster", "MASTER", true) });
@@ -181,18 +181,203 @@ AbyssalEditor::AbyssalEditor (AbyssalProcessor& p)
     addAndMakeVisible (irLabel);
     refreshImpulseResponseLabel();
 
+    // Presets
+    presetBox.setTextWhenNothingSelected ("Preset");
+    presetBox.onChange = [this]
+    {
+        const int index = presetBox.getSelectedId() - 1;
+        if (index >= 0 && index != processor.getPresetManager().getCurrentIndex())
+            processor.getPresetManager().loadPreset (index);
+        refreshPresetBox();
+        refreshImpulseResponseLabel();
+    };
+    previousPresetButton.onClick = [this] { processor.getPresetManager().loadPrevious(); refreshPresetBox(); refreshImpulseResponseLabel(); };
+    nextPresetButton.onClick = [this] { processor.getPresetManager().loadNext(); refreshPresetBox(); refreshImpulseResponseLabel(); };
+    savePresetButton.onClick = [this] { showSavePresetDialog(); };
+
+    for (auto* c : std::initializer_list<juce::Component*> { &presetBox, &previousPresetButton, &nextPresetButton, &savePresetButton })
+        addAndMakeVisible (c);
+    refreshPresetBox();
+
+    // Tuner
+    tunerButton.setClickingTogglesState (true);
+    tunerButton.setColour (juce::TextButton::buttonOnColourId, palette::kelp);
+    tunerButton.onClick = [this] { setTunerVisible (tunerButton.getToggleState()); };
+    addAndMakeVisible (tunerButton);
+    addChildComponent (tunerDisplay);
+
+    addAndMakeVisible (inputMeter);
+    addAndMakeVisible (outputMeter);
+
     setResizable (true, true);
     setResizeLimits (900, 560, 1600, 1000);
     getConstrainer()->setFixedAspectRatio (1040.0 / 640.0);
     setSize (1040, 640);
+    startTimerHz (30);
 }
 
-AbyssalEditor::~AbyssalEditor()
+PomanEditor::~PomanEditor()
 {
+    processor.setTunerActive (false);
     setLookAndFeel (nullptr);
 }
 
-AbyssalEditor::Knob& AbyssalEditor::addKnob (const juce::String& paramId, const juce::String& name, bool large)
+void PomanEditor::refreshPresetBox()
+{
+    auto& presets = processor.getPresetManager();
+    presets.refreshUserPresets();
+    const auto names = presets.getPresetNames();
+
+    presetBox.clear (juce::dontSendNotification);
+    presetBox.addSectionHeading ("FACTORY");
+    for (int i = 0; i < names.size(); ++i)
+    {
+        if (i == presets.getNumFactoryPresets())
+            presetBox.addSectionHeading ("USER");
+        presetBox.addItem (names[i], i + 1);
+    }
+
+    shownPresetName = presets.getCurrentName();
+    const int current = presets.getCurrentIndex();
+    if (current >= 0)
+        presetBox.setSelectedId (current + 1, juce::dontSendNotification);
+    else
+        presetBox.setText (shownPresetName, juce::dontSendNotification);
+}
+
+void PomanEditor::showSavePresetDialog()
+{
+    saveDialog = std::make_unique<juce::AlertWindow> ("Save preset", "Name for the new preset:", juce::MessageBoxIconType::NoIcon, this);
+    saveDialog->addTextEditor ("name", processor.getPresetManager().getCurrentName());
+    saveDialog->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    saveDialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    saveDialog->enterModalState (true, juce::ModalCallbackFunction::create ([this] (int result)
+    {
+        if (result == 1 && saveDialog != nullptr)
+        {
+            const auto name = saveDialog->getTextEditorContents ("name");
+            if (! processor.getPresetManager().saveUserPreset (name))
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save preset",
+                                                        "Could not save to " + processor.getPresetManager().getUserFolder().getFullPathName());
+            refreshPresetBox();
+        }
+        saveDialog = nullptr;
+    }), false);
+}
+
+void PomanEditor::setTunerVisible (bool visible)
+{
+    processor.setTunerActive (visible);
+    tunerDisplay.setVisible (visible);
+    if (visible)
+        tunerDisplay.toFront (false);
+}
+
+void PomanEditor::timerCallback()
+{
+    inputMeter.pushPeak (processor.takeInputPeak());
+    outputMeter.pushPeak (processor.takeOutputPeak());
+
+    if (tunerDisplay.isVisible())
+        tunerDisplay.setReading (processor.analyseTuner());
+
+    // Session restores and host preset changes can swap the state underneath the editor.
+    if (processor.getPresetManager().getCurrentName() != shownPresetName)
+    {
+        refreshPresetBox();
+        refreshImpulseResponseLabel();
+    }
+}
+
+//==============================================================================
+void LevelMeter::pushPeak (float peak)
+{
+    const float db = juce::Decibels::gainToDecibels (peak, -100.0f);
+    levelDb = db > levelDb ? db : juce::jmax (db, levelDb - 1.5f);
+    if (peak >= 0.99f)
+        clipHoldFrames = 45;
+    else if (clipHoldFrames > 0)
+        --clipHoldFrames;
+    repaint();
+}
+
+void LevelMeter::paint (juce::Graphics& g)
+{
+    auto area = getLocalBounds().toFloat();
+    const auto led = area.removeFromTop (area.getWidth());
+    area.removeFromTop (2.0f);
+
+    g.setColour (clipHoldFrames > 0 ? juce::Colour (0xffff3b30) : palette::abyss);
+    g.fillRoundedRectangle (led, 2.0f);
+
+    g.setColour (palette::abyss);
+    g.fillRoundedRectangle (area, 2.0f);
+
+    const float proportion = juce::jlimit (0.0f, 1.0f, (levelDb + 60.0f) / 60.0f);
+    const auto fill = area.withTop (area.getBottom() - area.getHeight() * proportion);
+    const auto colour = levelDb > -3.0f ? palette::ember : (levelDb > -12.0f ? juce::Colour (0xffffc94a) : palette::kelp);
+    g.setColour (colour);
+    g.fillRoundedRectangle (fill, 2.0f);
+}
+
+void TunerDisplay::setReading (const poman::TunerReading& reading)
+{
+    if (reading.frequency > 0.0f)
+    {
+        if (reading.midiNote != current.midiNote)
+            smoothedCents = reading.cents;
+        current = reading;
+        smoothedCents += 0.35f * (reading.cents - smoothedCents);
+        silentFrames = 0;
+    }
+    else
+    {
+        ++silentFrames;
+    }
+    repaint();
+}
+
+void TunerDisplay::paint (juce::Graphics& g)
+{
+    const auto bounds = getLocalBounds().toFloat();
+    g.setColour (palette::abyss.withAlpha (0.96f));
+    g.fillRoundedRectangle (bounds, 8.0f);
+    g.setColour (palette::kelp);
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 8.0f, 1.5f);
+
+    const bool hasPitch = silentFrames < 20 && current.frequency > 0.0f;
+    const bool inTune = hasPitch && std::abs (smoothedCents) < 3.0f;
+    const float h = bounds.getHeight();
+
+    g.setFont (juce::FontOptions (h * 0.32f, juce::Font::bold));
+    g.setColour (hasPitch ? (inTune ? palette::kelp : palette::text) : palette::dimText);
+    g.drawText (hasPitch ? current.noteName() : juce::String ("--"), bounds.withTrimmedBottom (h * 0.35f), juce::Justification::centred);
+
+    g.setFont (juce::FontOptions (h * 0.08f));
+    g.setColour (palette::dimText);
+    const auto info = hasPitch ? juce::String (current.frequency, 1) + " Hz   " + (smoothedCents >= 0.0f ? "+" : "") + juce::String (smoothedCents, 1) + " cents"
+                               : juce::String ("Play a string - output muted");
+    g.drawText (info, bounds.withTop (bounds.getBottom() - h * 0.42f).withHeight (h * 0.12f), juce::Justification::centred);
+
+    // Cents scale -50..+50
+    const auto scale = bounds.reduced (bounds.getWidth() * 0.12f, 0.0f).withTop (bounds.getBottom() - h * 0.26f).withHeight (h * 0.1f);
+    for (int c = -50; c <= 50; c += 10)
+    {
+        const float x = scale.getX() + scale.getWidth() * (float) (c + 50) / 100.0f;
+        g.setColour (c == 0 ? palette::kelp : palette::panelEdge.brighter (0.4f));
+        g.fillRect (x - 1.0f, scale.getY(), 2.0f, scale.getHeight() * (c == 0 ? 1.0f : 0.6f));
+    }
+
+    if (hasPitch)
+    {
+        const float x = scale.getX() + scale.getWidth() * (juce::jlimit (-50.0f, 50.0f, smoothedCents) + 50.0f) / 100.0f;
+        g.setColour (inTune ? palette::kelp : palette::ember);
+        g.fillRoundedRectangle (x - 4.0f, scale.getY() - 6.0f, 8.0f, scale.getHeight() + 12.0f, 3.0f);
+    }
+}
+
+
+PomanEditor::Knob& PomanEditor::addKnob (const juce::String& paramId, const juce::String& name, bool large)
 {
     auto knob = std::make_unique<Knob>();
     knob->slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
@@ -213,7 +398,7 @@ AbyssalEditor::Knob& AbyssalEditor::addKnob (const juce::String& paramId, const 
     return *knobs.back();
 }
 
-AbyssalEditor::Section& AbyssalEditor::addSection (const juce::String& title, juce::Colour accent,
+PomanEditor::Section& PomanEditor::addSection (const juce::String& title, juce::Colour accent,
                                                    const juce::String& powerParamId, std::initializer_list<Knob*> sectionKnobs)
 {
     auto section = std::make_unique<Section>();
@@ -237,20 +422,20 @@ AbyssalEditor::Section& AbyssalEditor::addSection (const juce::String& title, ju
     return *sections.back();
 }
 
-void AbyssalEditor::refreshChannelButtons (int channel)
+void PomanEditor::refreshChannelButtons (int channel)
 {
     for (int i = 0; i < 3; ++i)
         channelButtons[(size_t) i].setToggleState (i == channel, juce::dontSendNotification);
 }
 
-void AbyssalEditor::refreshImpulseResponseLabel()
+void PomanEditor::refreshImpulseResponseLabel()
 {
     const auto name = processor.getImpulseResponseName();
     irLabel.setText (name.isEmpty() ? "Built-in 4x12 model" : name, juce::dontSendNotification);
     clearIrButton.setToggleState (name.isEmpty(), juce::dontSendNotification);
 }
 
-void AbyssalEditor::layoutKnobs (Section& section, juce::Rectangle<int> area)
+void PomanEditor::layoutKnobs (Section& section, juce::Rectangle<int> area)
 {
     if (section.knobs.empty())
         return;
@@ -268,7 +453,7 @@ void AbyssalEditor::layoutKnobs (Section& section, juce::Rectangle<int> area)
 }
 
 //==============================================================================
-void AbyssalEditor::paint (juce::Graphics& g)
+void PomanEditor::paint (juce::Graphics& g)
 {
     const auto bounds = getLocalBounds().toFloat();
     juce::ColourGradient depth (palette::trench, bounds.getCentreX(), 0.0f, palette::abyss, bounds.getCentreX(), bounds.getBottom(), false);
@@ -290,10 +475,10 @@ void AbyssalEditor::paint (juce::Graphics& g)
     auto header = getLocalBounds().removeFromTop ((int) (64 * scale)).reduced ((int) (20 * scale), 0);
     g.setColour (palette::text);
     g.setFont (juce::FontOptions (34.0f * scale, juce::Font::bold));
-    g.drawText ("ABYSSAL", header, juce::Justification::centredLeft);
+    g.drawText ("POMAN", header, juce::Justification::centredLeft);
     g.setColour (palette::biolume);
-    g.setFont (juce::FontOptions (12.0f * scale));
-    g.drawText ("DEEP-PRESSURE GUITAR RIG", header.withTrimmedLeft ((int) (175 * scale)), juce::Justification::centredLeft);
+    g.setFont (juce::FontOptions (11.0f * scale));
+    g.drawText ("GUITAR AMP SUITE", header.withTrimmedLeft ((int) (128 * scale)), juce::Justification::centredLeft);
 
     for (auto& s : sections)
     {
@@ -313,7 +498,7 @@ void AbyssalEditor::paint (juce::Graphics& g)
     }
 }
 
-void AbyssalEditor::resized()
+void PomanEditor::resized()
 {
     const float scale = (float) getWidth() / 1040.0f;
     const auto sc = [scale] (int v) { return juce::roundToInt ((float) v * scale); };
@@ -322,14 +507,24 @@ void AbyssalEditor::resized()
     auto header = area.removeFromTop (sc (64));
     area.removeFromBottom (sc (14));
 
-    auto io = header.removeFromRight (sc (180)).reduced (0, sc (4));
-    for (auto* k : { inputKnob, outputKnob })
+    auto io = header.removeFromRight (sc (220)).reduced (0, sc (6));
+    for (auto [k, meter] : { std::pair { inputKnob, &inputMeter }, std::pair { outputKnob, &outputMeter } })
     {
-        auto cell = io.removeFromLeft (sc (90));
-        k->label.setBounds (cell.removeFromLeft (sc (48)).withSizeKeepingCentre (sc (48), sc (16)));
-        k->slider.setBounds (cell.withSizeKeepingCentre (sc (44), sc (56)));
+        auto cell = io.removeFromLeft (sc (110));
+        k->label.setBounds (cell.removeFromLeft (sc (50)).withSizeKeepingCentre (sc (50), sc (16)));
+        meter->setBounds (cell.removeFromRight (sc (10)).reduced (0, sc (2)));
+        k->slider.setBounds (cell.withSizeKeepingCentre (sc (44), sc (52)));
         k->slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     }
+
+    header.removeFromLeft (sc (270));
+    auto presetRow = header.withSizeKeepingCentre (header.getWidth(), sc (30));
+    tunerButton.setBounds (presetRow.removeFromRight (sc (80)).reduced (sc (4), 0));
+    presetRow.removeFromRight (sc (10));
+    savePresetButton.setBounds (presetRow.removeFromRight (sc (60)).reduced (sc (2), 0));
+    previousPresetButton.setBounds (presetRow.removeFromLeft (sc (30)).reduced (sc (2), 0));
+    nextPresetButton.setBounds (presetRow.removeFromRight (sc (30)).reduced (sc (2), 0));
+    presetBox.setBounds (presetRow.reduced (sc (2), 0));
 
     const int gap = sc (10);
     const int rowHeight = (area.getHeight() - 2 * gap) / 3;
@@ -380,4 +575,6 @@ void AbyssalEditor::resized()
 
         layoutKnobs (*s, inner.withTrimmedTop (sc (14)));
     }
+
+    tunerDisplay.setBounds (ampSection->bounds);
 }

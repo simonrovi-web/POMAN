@@ -6,3 +6,6 @@ dist/
 *.zip
 portable/*/Abyssal.exe
 portable/*/Abyssal.settings
+portable/*/*.exe
+portable/*/*.settings
+portable/*/Presets/

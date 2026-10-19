@@ -3,10 +3,10 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "PluginProcessor.h"
 
-class AbyssalLookAndFeel : public juce::LookAndFeel_V4
+class PomanLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    AbyssalLookAndFeel();
+    PomanLookAndFeel();
 
     void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height, float sliderPos,
                            float startAngle, float endAngle, juce::Slider&) override;
@@ -15,11 +15,35 @@ public:
                                bool highlighted, bool down) override;
 };
 
-class AbyssalEditor : public juce::AudioProcessorEditor
+// Vertical peak meter with decay and a clip LED that latches for a moment.
+class LevelMeter : public juce::Component
 {
 public:
-    explicit AbyssalEditor (AbyssalProcessor&);
-    ~AbyssalEditor() override;
+    void pushPeak (float peak);
+    void paint (juce::Graphics&) override;
+
+private:
+    float levelDb = -100.0f;
+    int clipHoldFrames = 0;
+};
+
+class TunerDisplay : public juce::Component
+{
+public:
+    void setReading (const poman::TunerReading& reading);
+    void paint (juce::Graphics&) override;
+
+private:
+    poman::TunerReading current;
+    float smoothedCents = 0.0f;
+    int silentFrames = 100;
+};
+
+class PomanEditor : public juce::AudioProcessorEditor, private juce::Timer
+{
+public:
+    explicit PomanEditor (PomanProcessor&);
+    ~PomanEditor() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -48,9 +72,13 @@ private:
     void layoutKnobs (Section&, juce::Rectangle<int> area);
     void refreshChannelButtons (int channel);
     void refreshImpulseResponseLabel();
+    void refreshPresetBox();
+    void showSavePresetDialog();
+    void setTunerVisible (bool visible);
+    void timerCallback() override;
 
-    AbyssalProcessor& processor;
-    AbyssalLookAndFeel lookAndFeel;
+    PomanProcessor& processor;
+    PomanLookAndFeel lookAndFeel;
 
     std::vector<std::unique_ptr<Knob>> knobs;
     std::vector<std::unique_ptr<Section>> sections;
@@ -67,5 +95,14 @@ private:
     juce::Label irLabel;
     std::unique_ptr<juce::FileChooser> fileChooser;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AbyssalEditor)
+    juce::ComboBox presetBox;
+    juce::TextButton previousPresetButton { "<" }, nextPresetButton { ">" }, savePresetButton { "SAVE" };
+    juce::TextButton tunerButton { "TUNER" };
+    std::unique_ptr<juce::AlertWindow> saveDialog;
+    juce::String shownPresetName;
+
+    LevelMeter inputMeter, outputMeter;
+    TunerDisplay tunerDisplay;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PomanEditor)
 };

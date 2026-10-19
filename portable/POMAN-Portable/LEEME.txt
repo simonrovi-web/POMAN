@@ -1,0 +1,31 @@
+POMAN - Guitar Amp Suite (version portable 0.2.0)
+==================================================
+
+No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
+escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.2.0
+- Presets: 8 de fabrica (Clean Glass, Edge Crunch, Modern Rhythm, Drop Tune
+  Chug, Sub Octave Riff, Soaring Lead, Ambient Swell...). Usa < > o la lista.
+  SAVE guarda tus propios presets en la carpeta Presets.
+- Afinador: boton TUNER. Silencia la salida mientras afinas, como un pedal.
+- Medidores de entrada y salida con LED de saturacion (rojo = estas
+  saturando: baja INPUT u OUTPUT).
+- Los controles muestran unidades (%, dB, ms).
+
+Carpetas
+- Presets\  tus presets (.poman). Puedes copiarlos entre equipos.
+- IRs\      tus impulsos de cabina (.wav / .aif). Los IR cargados desde aqui
+            se guardan con ruta relativa y siguen funcionando si mueves la
+            carpeta.
+- POMAN.settings  configuracion (interfaz de audio, ultimo sonido). No escribe
+  en el registro ni en AppData. Para empezar de cero, borralo.
+
+Audio y latencia
+- Primer uso: elige automaticamente tu interfaz ASIO (o "Windows Audio
+  (Low Latency Mode)" si no hay ASIO) con el buffer mas pequeno estable
+  (>= 64 muestras). Puedes cambiarlo en Options > Audio/MIDI Settings.
+- Si oyes clics/crujidos, sube el buffer a 128. Cierra otras apps (Ableton,
+  FL Studio) que esten usando el mismo driver ASIO.
+
+Requisitos: Windows 10/11 de 64 bits.

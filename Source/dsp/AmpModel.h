@@ -3,7 +3,7 @@
 #include "DspCommon.h"
 #include <memory>
 
-namespace abyssal
+namespace poman
 {
 struct AmpParams
 {
@@ -180,4 +180,4 @@ private:
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> stageGain { 1.0f }, powerDrive { 1.0f };
     float sagAttack = 0.0f, sagRelease = 0.0f, sagEnvelope = 0.0f;
 };
-} // namespace abyssal
+} // namespace poman

@@ -3,7 +3,7 @@
 #include "DspCommon.h"
 #include <atomic>
 
-namespace abyssal
+namespace poman
 {
 // 4x12-style cabinet: a built-in filter model, or a user impulse response when one is loaded.
 class CabSim
@@ -72,4 +72,4 @@ private:
     Biquad lowCut, resonance, boxDip, speakerPeak, rollOff1, rollOff2;
     float mic = 0.5f, lastMic = -1.0f;
 };
-} // namespace abyssal
+} // namespace poman

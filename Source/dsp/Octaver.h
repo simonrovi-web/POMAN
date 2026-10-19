@@ -2,7 +2,7 @@
 
 #include "DspCommon.h"
 
-namespace abyssal
+namespace poman
 {
 // Analog-style octaver: flip-flop divider for the sub octave, full-wave rectifier for the octave up.
 class Octaver
@@ -76,4 +76,4 @@ private:
     bool armed = false;
     float subLevel = 0.5f, upLevel = 0.0f, dryLevel = 1.0f;
 };
-} // namespace abyssal
+} // namespace poman

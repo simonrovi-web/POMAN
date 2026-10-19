@@ -2,7 +2,7 @@
 
 #include "DspCommon.h"
 
-namespace abyssal
+namespace poman
 {
 // Ping-pong delay with darkened, thinned repeats.
 class PingPongDelay
@@ -94,4 +94,4 @@ public:
 private:
     juce::dsp::Reverb reverb;
 };
-} // namespace abyssal
+} // namespace poman

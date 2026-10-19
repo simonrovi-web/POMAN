@@ -10,11 +10,13 @@
 #include "dsp/Octaver.h"
 #include "dsp/Overdrive.h"
 #include "PortablePaths.h"
+#include "PresetManager.h"
+#include "Tuner.h"
 
-class AbyssalProcessor : public juce::AudioProcessor
+class PomanProcessor : public juce::AudioProcessor
 {
 public:
-    AbyssalProcessor();
+    PomanProcessor();
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -25,7 +27,7 @@ public:
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
 
-    const juce::String getName() const override { return "Abyssal"; }
+    const juce::String getName() const override { return "POMAN"; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
@@ -46,6 +48,19 @@ public:
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
+    // Replaces all parameters and the IR from a saved state tree (session restore and user presets).
+    void applyState (const juce::ValueTree& state);
+
+    poman::PresetManager& getPresetManager() { return *presetManager; }
+
+    // Peak levels since the last call (UI thread), for the meters.
+    float takeInputPeak() { return inputPeak.exchange (0.0f); }
+    float takeOutputPeak() { return outputPeak.exchange (0.0f); }
+
+    // While the tuner is open the output is muted, like a tuner pedal.
+    void setTunerActive (bool active) { tunerActive.store (active); }
+    poman::TunerReading analyseTuner() { return tuner.analyse(); }
+
     juce::AudioProcessorValueTreeState apvts;
 
 private:
@@ -63,17 +78,22 @@ private:
 
     std::array<std::atomic<float>*, (size_t) Param::count> rawParameters {};
 
-    abyssal::NoiseGate gate;
-    abyssal::Octaver octaver;
-    abyssal::Overdrive overdrive;
-    abyssal::AmpModel amp;
-    abyssal::CabSim cab;
-    abyssal::PingPongDelay delay;
-    abyssal::Ambience reverb;
+    poman::NoiseGate gate;
+    poman::Octaver octaver;
+    poman::Overdrive overdrive;
+    poman::AmpModel amp;
+    poman::CabSim cab;
+    poman::PingPongDelay delay;
+    poman::Ambience reverb;
 
     juce::AudioBuffer<float> monoBuffer;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> inputGain { 1.0f }, outputGain { 1.0f };
     int maxChunkSize = 512;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (AbyssalProcessor)
+    std::unique_ptr<poman::PresetManager> presetManager;
+    poman::Tuner tuner;
+    std::atomic<bool> tunerActive { false };
+    std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f };
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PomanProcessor)
 };

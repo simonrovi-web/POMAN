@@ -1,5 +1,5 @@
 // Portable standalone app: replaces JUCE's default StandaloneFilterApp so settings (audio device,
-// plugin state) live next to Abyssal.exe instead of %APPDATA%. Falls back to %APPDATA% when the
+// plugin state) live next to POMAN.exe instead of %APPDATA%. Falls back to %APPDATA% when the
 // executable's folder is read-only (e.g. Program Files).
 
 #include <juce_core/juce_core.h>
@@ -24,7 +24,7 @@ juce::PropertiesFile::Options settingsOptions()
 
 juce::File settingsFile()
 {
-    const auto portableDir = abyssal::portableRoot();
+    const auto portableDir = poman::portableRoot();
     if (portableDir.hasWriteAccess())
         return portableDir.getChildFile (juce::String (JucePlugin_Name) + ".settings");
 
@@ -102,7 +102,7 @@ void preferLowLatencyDevice (juce::AudioDeviceManager& deviceManager)
 }
 } // namespace
 
-class AbyssalStandaloneApp final : public juce::JUCEApplication
+class PomanStandaloneApp final : public juce::JUCEApplication
 {
 public:
     const juce::String getApplicationName() override { return JucePlugin_Name; }
@@ -110,7 +110,7 @@ public:
     bool moreThanOneInstanceAllowed() override { return true; }
     void anotherInstanceStarted (const juce::String&) override {}
 
-    void initialise (const juce::String&) override
+    void initialise (const juce::String& commandLine) override
     {
         settings = std::make_unique<juce::PropertiesFile> (settingsFile(), settingsOptions());
         const bool firstRun = ! settings->containsKey ("audioSetup");
@@ -129,6 +129,24 @@ public:
             juce::LookAndFeel::getDefaultLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId),
             std::move (holder));
         mainWindow->setVisible (true);
+
+        // Dev aid: POMAN.exe --snapshot=out.png renders the editor to a PNG and quits.
+        const auto snapshotPath = commandLine.fromFirstOccurrenceOf ("--snapshot=", false, false).unquoted();
+        if (snapshotPath.isNotEmpty())
+        {
+            juce::Timer::callAfterDelay (1500, [this, snapshotPath]
+            {
+                if (auto* content = mainWindow->getContentComponent())
+                {
+                    juce::File target (snapshotPath);
+                    target.deleteFile();
+                    juce::FileOutputStream out (target);
+                    if (out.openedOk())
+                        juce::PNGImageFormat().writeImageToStream (content->createComponentSnapshot (content->getLocalBounds()), out);
+                }
+                systemRequestedQuit();
+            });
+        }
     }
 
     void shutdown() override
@@ -165,7 +183,7 @@ private:
 
 juce::JUCEApplicationBase* juce_CreateApplication()
 {
-    return new AbyssalStandaloneApp();
+    return new PomanStandaloneApp();
 }
 
 #endif
