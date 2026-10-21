@@ -25,7 +25,7 @@ public:
     static juce::StringArray modelNames()
     {
         return { "Glass Clean", "Modern Rhythm", "Modern Lead", "US Clean", "Chime Class A",
-                 "Brit Crunch", "Hot Rod Lead", "Hi-Gain Rect", "Tight Djent", "Lead 51", "Cali Lead" };
+                 "Brit Crunch", "Hot Rod Lead", "Hi-Gain Rect", "Tight Djent", "Lead 51", "Cali Lead", "Liquid Lead" };
     }
 
     void prepare (double newSampleRate, int maxBlockSize)
@@ -195,7 +195,7 @@ private:
 
     // stages | in HP, pre-shape Hz/dB, bright dB | gain min/max, bias | coupling, miller, trim
     //        | mid Hz, mid Q, mid offset dB | sag, presence Hz
-    static constexpr std::array<Voicing, 11> voicings { {
+    static constexpr std::array<Voicing, 12> voicings { {
         // Glass Clean: two glassy stages, firm power amp.
         { 2, 50.0f, 800.0f, 0.0f, 4.0f, 1.5f, 8.0f, 0.06f, 25.0f, 12000.0f, 0.9f, 650.0f, 0.9f, 0.0f, 0.3f, 4500.0f },
         // Modern Rhythm: tight, scooped-ready crunch.
@@ -220,6 +220,9 @@ private:
         // Cali Lead: California boutique lead style (Mark-type). Five cascaded stages fed by a very tight,
         // mid-focused front end; smooth singing top, little sag. Made to pair with a V-shaped graphic EQ.
         { 5, 120.0f, 900.0f, 5.0f, 3.0f, 30.0f, 900.0f, 0.22f, 80.0f, 6500.0f, 0.55f, 650.0f, 0.8f, -1.0f, 0.2f, 4200.0f },
+        // Liquid Lead: virtuoso lead voice. Four stages with a firm low end and a vocal 1.2 kHz push
+        // before the clipping, a soft top (no fizz) and a little sag so long notes breathe and sing.
+        { 4, 100.0f, 1200.0f, 5.0f, 1.5f, 12.0f, 700.0f, 0.12f, 60.0f, 6800.0f, 0.6f, 1100.0f, 0.8f, 2.0f, 0.35f, 4300.0f },
     } };
 
     void applyVoicing (int channel)
@@ -248,8 +251,8 @@ private:
     }
 
     // Which models use the Fender-family stack (the Mark-style stack derives from it); the rest are Marshall-style.
-    static constexpr std::array<bool, 11> fenderStack { true,  false, false, true,  true, false,
-                                                        false, false, false, false, true };
+    static constexpr std::array<bool, 12> fenderStack { true,  false, false, true,  true, false,
+                                                        false, false, false, false, true,  false };
 
     static constexpr size_t oversamplingOrder = 2;
 
@@ -265,7 +268,7 @@ private:
     // output-pair asymmetry (even harmonics), how strongly hard picks bias the preamp colder, and the
     // output trim that keeps each model at its previous level (measured at gain 6, master 5).
     struct Power { float feedback, asymmetry, gridBlocking, levelDb; };
-    static constexpr std::array<Power, 11> power { {
+    static constexpr std::array<Power, 12> power { {
         { 0.50f, 0.05f, 0.15f, -3.7f }, // Glass Clean
         { 0.50f, 0.04f, 0.15f, -3.2f }, // Modern Rhythm
         { 0.45f, 0.04f, 0.20f, -3.4f }, // Modern Lead
@@ -277,6 +280,7 @@ private:
         { 0.60f, 0.03f, 0.05f, -2.3f }, // Tight Djent: tight, fast, little push-back
         { 0.50f, 0.04f, 0.15f, -2.7f }, // Lead 51
         { 0.50f, 0.04f, 0.10f, -2.5f }, // Cali Lead
+        { 0.45f, 0.05f, 0.20f, -3.5f }, // Liquid Lead: some push-back on hard picks, then it blooms
     } };
 
     ToneStack toneStack;

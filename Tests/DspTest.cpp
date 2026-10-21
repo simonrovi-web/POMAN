@@ -120,6 +120,8 @@ int main()
         { "C major: E +oct",         64, 0, 0, 7, 12 },
         { "C major: C# (out) +3rd",  61, 0, 0, 2, 4 },  // measured from C below
         { "A min pent: A +1 = C",    57, 9, 6, 1, 3 },
+        { "E lydian: E +4th = A#",   52, 4, 8, 3, 6 },  // the raised fourth that defines the mode
+        { "E lydian: B +3rd = D#",   59, 4, 8, 2, 4 },
     };
     for (const auto& c : intervals)
     {

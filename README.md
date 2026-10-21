@@ -21,9 +21,10 @@ Input → [Afinador] → Gate (detección) → Comp → Wah → Octavador → Dr
 - **Comp**: compresor feed-forward con rodilla suave de 6 dB, sustain (umbral + ratio), ataque, nivel y mezcla en paralelo.
 - **Drive** (5 tipos, 16x oversampling; Distortion y Fuzz con ADAA de primer orden): Mid Boost (joroba de medios, aprieta graves), Blues Drive (transparente con mezcla limpia),
   Distortion (recorte duro de op-amp), Fuzz (dos etapas, tono con medios recortados) y Treble Boost.
-- **POMAN Amplifier** (11 modelos): Glass Clean, Modern Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch,
+- **POMAN Amplifier** (12 modelos): Glass Clean, Modern Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch,
   Hot Rod Lead, Hi-Gain Rect, Tight Djent, Lead 51 (alta ganancia estilo 5150, 5 etapas) y Cali Lead (lead californiano
-  tipo Mark, 5 etapas, pensado para el EQ en V). NAM Capture ocupa siempre el índice 10 de la lista; los modelos nuevos van detrás. Cada modelo define etapas de preamp (2-4), filtros de acoplo,
+  tipo Mark, 5 etapas, pensado para el EQ en V) y Liquid Lead (lead virtuoso: 4 etapas, medios vocales a 1,2 kHz,
+  agudos suaves). NAM Capture ocupa siempre el índice 10 de la lista; los modelos nuevos van detrás. Cada modelo define etapas de preamp (2-4), filtros de acoplo,
   stack de tonos pasivo modelado del circuito (ecuación de Yeh y Smith, DAFx 2006, con valores Fender o Marshall según el
   modelo), voz de medios propia y sag. La etapa de potencia tiene realimentación negativa global con PRESENCE y DEPTH dentro
   del lazo (cantidad propia de cada modelo; el Chime no tiene), interacción con el altavoz cuando la realimentación es baja
@@ -42,7 +43,7 @@ Input → [Afinador] → Gate (detección) → Comp → Wah → Octavador → Dr
   Al apagar delay o reverb (o cambiar a un preset sin ellos) sus colas se apagan solas.
 
 - **Harmonizer**: 2 voces panoramizadas. En modo *Diatonic* sigue el tono de la señal DI limpia (YIN)
-  y calcula cada intervalo por grados de la escala elegida (8 escalas, 12 tonalidades); en *Chromatic* usa
+  y calcula cada intervalo por grados de la escala elegida (9 escalas con el modo lidio, 12 tonalidades); en *Chromatic* usa
   semitonos fijos. Transpone la señal ya procesada (post-cabina) con un pitch shifter de doble lectura cuya
   ventana es un múltiplo exacto del periodo de entrada, para que la armonía no se desafine.
 
@@ -104,7 +105,7 @@ guardar estado por componente.
 
 - **Delay** sincronizable (figuras de 1/2 a 1/16, con puntillo y tresillo) al tempo del DAW o del estudio, con tap tempo.
 - **CAL**: calibración de entrada que lleva el pico de la DI a -9 dBFS.
-- **Presets**: 29 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
+- **Presets**: 35 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
 - **Afinador** YIN (31 Hz a 1,3 kHz) que silencia la salida mientras está abierto.
 - **Medidores** de entrada y salida con indicador de saturación.
 - **Audio**: ASIO y WASAPI de baja latencia; en el primer arranque elige la interfaz ASIO de hardware con el buffer más pequeño estable.

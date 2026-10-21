@@ -1,8 +1,19 @@
-POMAN - Guitar Amp Suite (version portable 0.13.0)
+POMAN - Guitar Amp Suite (version portable 0.13.1)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.13.1
+- Amplificador nuevo: Liquid Lead, para solos de estilo virtuoso: medios
+  "vocales" hacia 1,2 kHz, graves firmes, agudos suaves sin chisporroteo y
+  mucho sustain; limpia al tocar suave.
+- Armonizador: escala Lydian (modo lidio).
+- 6 presets nuevos: Liquid Lead, Vocal Wah Lead, Lydian Harmony (terceras
+  y quintas en Mi lidio), Octave Dive Lead (voz una octava arriba),
+  Crystal Clean (limpio brillante con chorus) y Arena Rhythm.
+  Son sonidos propios inspirados en ese estilo de guitarra; no copian el
+  equipo de ningun guitarrista.
 
 Novedades 0.13.0
 - Idioma: la interfaz esta en espanol o ingles (boton ES/EN junto al logo).

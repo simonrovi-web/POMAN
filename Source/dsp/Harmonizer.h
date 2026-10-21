@@ -23,6 +23,7 @@ inline const std::vector<Scale>& harmonizerScales()
         { "Harmonic Minor", { 0, 2, 3, 5, 7, 8, 11 } },
         { "Minor Pentatonic", { 0, 3, 5, 7, 10 } },
         { "Major Pentatonic", { 0, 2, 4, 7, 9 } },
+        { "Lydian", { 0, 2, 4, 6, 7, 9, 11 } }, // added last: saved states store the index
     };
     return scales;
 }
