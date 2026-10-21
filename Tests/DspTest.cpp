@@ -1,5 +1,6 @@
 ﻿// Offline render of every amp model and drive type: checks for NaN/silence/runaway levels
 // and prints RMS so the models can be level-matched.
+#include "dsp/Looper.h"
 #include "dsp/CabSim.h"
 #include "dsp/Resampler.h"
 #include "dsp/Tempo.h"
@@ -12,6 +13,7 @@
 #include "dsp/Modulation.h"
 #include <algorithm>
 #include <cstdio>
+#include <functional>
 
 namespace
 {
@@ -676,6 +678,106 @@ int main()
         failures += cutOk ? 0 : 1;
         std::printf ("%s  %-24s 60 Hz down %.1f dB with LOW CUT at 300 Hz\n", cutOk ? "PASS" : "FAIL", "cab low cut", drop);
         irB.deleteFile();
+    }
+
+    std::printf ("-- Looper --\n");
+    {
+        using LS = poman::Looper::State;
+        using Cmd = poman::Looper::Command;
+        constexpr int loopLen = 48000; // 1 s
+        const auto tone = [] (double hz, float amp)
+        {
+            return [hz, amp] (juce::int64 i) { return amp * (float) std::sin (juce::MathConstants<double>::twoPi * hz * (double) i / 48000.0); };
+        };
+        const auto silence = [] (juce::int64) { return 0.0f; };
+
+        // Feeds `n` samples (generator by loop-relative index) and returns what the looper outputs.
+        const auto feed = [] (poman::Looper& l, int n, auto&& gen)
+        {
+            std::vector<float> outL ((size_t) n), outR ((size_t) n);
+            for (int pos = 0; pos < n; pos += 256)
+            {
+                const int count = juce::jmin (256, n - pos); // the last block may be partial
+                for (int i = 0; i < count; ++i)
+                    outL[(size_t) (pos + i)] = outR[(size_t) (pos + i)] = gen (pos + i);
+                l.process (outL.data() + pos, outR.data() + pos, count);
+            }
+            return outL;
+        };
+        // Largest difference between a pass of loop playback and the expected sum of generators.
+        const auto playbackError = [&] (poman::Looper& l, std::initializer_list<std::function<float (juce::int64)>> layers)
+        {
+            const auto out = feed (l, loopLen, silence);
+            float worst = 0.0f;
+            for (int i = 0; i < loopLen; ++i)
+            {
+                float expected = 0.0f;
+                for (const auto& f : layers)
+                    expected += f (i);
+                worst = std::max (worst, std::abs (out[(size_t) i] - expected));
+            }
+            return worst;
+        };
+
+        poman::Looper l;
+        l.prepare (48000.0);
+        const auto a = tone (200.0, 0.3f), b = tone (330.0, 0.2f), c = tone (500.0, 0.1f);
+
+        l.post (Cmd::main);
+        feed (l, loopLen, a);
+        l.post (Cmd::main); // close: plays from the start on the next block
+        const float errA = playbackError (l, { a });
+        const bool recordOk = l.getState() == LS::playing && std::abs (l.getLengthSeconds() - 1.0) < 1.0e-6 && errA < 1.0e-6f;
+
+        l.post (Cmd::main); // overdub one pass of b
+        feed (l, loopLen, b);
+        l.post (Cmd::main);
+        const float errAB = playbackError (l, { a, b });
+
+        l.post (Cmd::undo);
+        const float errUndo = playbackError (l, { a });
+        const bool redoAvailable = l.canRedo();
+        l.post (Cmd::undo); // redo
+        const float errRedo = playbackError (l, { a, b });
+        l.post (Cmd::undo);  // undo again, then a new overdub replaces b for good
+        l.post (Cmd::main);  // both apply at the next block, in order
+        feed (l, loopLen, c);
+        l.post (Cmd::main);
+        const float errAC = playbackError (l, { a, c });
+
+        const bool ok = recordOk && errAB < 1.0e-6f && errUndo < 1.0e-6f && redoAvailable && errRedo < 1.0e-6f && errAC < 1.0e-6f;
+        failures += ok ? 0 : 1;
+        std::printf ("%s  %-24s play %.1e, +dub %.1e, undo %.1e, redo %.1e, new dub after undo %.1e\n", ok ? "PASS" : "FAIL",
+                     "record/overdub/undo/redo", errA, errAB, errUndo, errRedo, errAC);
+
+        l.post (Cmd::stop);
+        const auto stopped = feed (l, 4096, silence);
+        l.post (Cmd::main);
+        const float errRestart = playbackError (l, { a, c });
+        l.post (Cmd::clear);
+        const auto cleared = feed (l, 4096, a); // empty looper passes the input through untouched
+        float stoppedPeak = 0.0f, passDiff = 0.0f;
+        for (int i = 0; i < 4096; ++i)
+            stoppedPeak = std::max (stoppedPeak, std::abs (stopped[(size_t) i])), passDiff = std::max (passDiff, std::abs (cleared[(size_t) i] - a (i)));
+        const bool ctlOk = stoppedPeak == 0.0f && errRestart < 1.0e-6f && l.getState() == LS::empty && passDiff == 0.0f;
+        failures += ctlOk ? 0 : 1;
+        std::printf ("%s  %-24s stop silent, restart from top, clear passes input\n", ctlOk ? "PASS" : "FAIL", "stop/restart/clear");
+
+        poman::Looper shortLoop;
+        shortLoop.prepare (48000.0);
+        shortLoop.post (Cmd::main);
+        feed (shortLoop, 2048, a); // 43 ms: an accidental double tap
+        shortLoop.post (Cmd::main);
+        feed (shortLoop, 256, silence);
+        poman::Looper full;
+        full.prepare (48000.0);
+        full.post (Cmd::main);
+        feed (full, (int) (48000 * poman::Looper::maxSeconds) + 48000, a); // a second past the limit
+        const bool limitOk = shortLoop.getState() == LS::empty && full.getState() == LS::playing
+                          && std::abs (full.getLengthSeconds() - poman::Looper::maxSeconds) < 1.0e-6;
+        failures += limitOk ? 0 : 1;
+        std::printf ("%s  %-24s accidental tap discarded (state %d), closes itself at %.0f s (state %d)\n", limitOk ? "PASS" : "FAIL",
+                     "loop length limits", (int) shortLoop.getState(), full.getLengthSeconds(), (int) full.getState());
     }
 
     std::printf ("-- Modulation --\n");

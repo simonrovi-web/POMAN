@@ -60,6 +60,13 @@ void PomanLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
     g.fillPath (pointer, juce::AffineTransform::rotation (angle).translated (centre));
 }
 
+juce::Font PomanLookAndFeel::getTextButtonFont (juce::TextButton& button, int buttonHeight)
+{
+    if (const auto* size = button.getProperties().getVarPointer ("fontSize"))
+        return juce::FontOptions ((float) *size, juce::Font::bold);
+    return LookAndFeel_V4::getTextButtonFont (button, buttonHeight);
+}
+
 void PomanLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
                                          float minPos, float maxPos, juce::Slider::SliderStyle style, juce::Slider& slider)
 {
@@ -337,8 +344,12 @@ PomanEditor::PomanEditor (PomanProcessor& p)
         addChildComponent (*studioView);
         drumView = std::make_unique<DrumView> (processor.getDrums(), processor.getRecorder());
         addChildComponent (*drumView);
+        loopView = std::make_unique<LoopView> (processor.getLooper(),
+                                               [this] (const juce::String& target, juce::Component& anchor) { showMidiMenu (target, anchor); },
+                                               [this] (const juce::String& target) { return processor.getMidiRouter().getCcFor (target); });
+        addChildComponent (*loopView);
 
-        for (auto* b : { &rigPageButton, &studioPageButton, &drumsPageButton })
+        for (auto* b : { &rigPageButton, &studioPageButton, &drumsPageButton, &loopPageButton })
         {
             b->setRadioGroupId (1001);
             b->setClickingTogglesState (true);
@@ -349,6 +360,7 @@ PomanEditor::PomanEditor (PomanProcessor& p)
         rigPageButton.onClick = [this] { showPage (Page::rig); };
         studioPageButton.onClick = [this] { showPage (Page::studio); };
         drumsPageButton.onClick = [this] { showPage (Page::drums); };
+        loopPageButton.onClick = [this] { showPage (Page::loop); };
     }
 
     setResizable (true, true);
@@ -414,10 +426,13 @@ void PomanEditor::showPage (Page page)
 
     studioView->setVisible (page == Page::studio);
     drumView->setVisible (page == Page::drums);
+    loopView->setVisible (page == Page::loop);
     if (page == Page::studio)
         studioView->toFront (false);
     else if (page == Page::drums)
         drumView->toFront (false);
+    else if (page == Page::loop)
+        loopView->toFront (false);
     else if (tunerDisplay.isVisible())
         tunerDisplay.toFront (false);
 }
@@ -1000,14 +1015,15 @@ void PomanEditor::resized()
         k->slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     }
 
-    header.removeFromLeft (sc (studioView != nullptr ? 150 : 270));
+    header.removeFromLeft (sc (studioView != nullptr ? 132 : 270));
     if (studioView != nullptr)
     {
-        auto pages = header.removeFromLeft (sc (204)).withSizeKeepingCentre (sc (204), sc (30));
-        rigPageButton.setBounds (pages.removeFromLeft (sc (58)).reduced (sc (2), 0));
-        studioPageButton.setBounds (pages.removeFromLeft (sc (74)).reduced (sc (2), 0));
-        drumsPageButton.setBounds (pages.reduced (sc (2), 0));
-        header.removeFromLeft (sc (8));
+        auto pages = header.removeFromLeft (sc (252)).withSizeKeepingCentre (sc (252), sc (30));
+        rigPageButton.setBounds (pages.removeFromLeft (sc (52)).reduced (sc (2), 0));
+        studioPageButton.setBounds (pages.removeFromLeft (sc (70)).reduced (sc (2), 0));
+        drumsPageButton.setBounds (pages.removeFromLeft (sc (66)).reduced (sc (2), 0));
+        loopPageButton.setBounds (pages.reduced (sc (2), 0));
+        header.removeFromLeft (sc (6));
     }
     auto presetRow = header.withSizeKeepingCentre (header.getWidth(), sc (30));
     tunerButton.setBounds (presetRow.removeFromRight (sc (80)).reduced (sc (4), 0));
@@ -1116,5 +1132,6 @@ void PomanEditor::resized()
     {
         studioView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
         drumView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
+        loopView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
     }
 }

@@ -1,8 +1,24 @@
-POMAN - Guitar Amp Suite (version portable 0.11.0)
+POMAN - Guitar Amp Suite (version portable 0.12.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.12.0
+- LOOPER (boton LOOP arriba): REC graba, PLAY cierra el bucle, DUB anade
+  capas encima. UNDO quita la ultima capa (pulsalo otra vez = REDO).
+  STOP y CLEAR. Hasta 60 s. LOOP LEVEL ajusta su volumen. Lo que suena en
+  el looper tambien se graba en STUDIO.
+- MIDI: conecta tu pedalera o controlador (POMAN abre todas las entradas
+  MIDI). Clic derecho sobre cualquier potenciometro, el LED de una seccion,
+  TUNER, < > o los botones del looper -> "MIDI learn" y mueve el pedal o
+  pulsa el footswitch. La etiqueta muestra el CC asignado, p. ej. GAIN [7].
+  Asigna OUTPUT a un pedal de expresion para usarlo como pedal de volumen.
+  Program Change n carga el preset n de la lista.
+- Grabacion por pistas sin limite de memoria: las tomas suenan desde el
+  disco (una toma de 10 minutos solo usa ~0.4 MB de RAM). La forma de onda
+  se dibuja mientras grabas. Si el disco no da abasto (p. ej. un USB lento)
+  POMAN avisa al terminar la toma.
 
 Novedades 0.11.0
 - Capturas NAM (Neural Amp Modeler): pulsa LOAD NAM en AMPLIFIER y elige

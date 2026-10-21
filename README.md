@@ -45,6 +45,23 @@ En el VST3 la página no aparece: ahí graba el DAW.
 - **Mod**: chorus (7-21 ms, seno, estéreo en cuadratura), flanger (0,3-4,3 ms, triángulo, realimentación
   limitada con tanh para que sea estable) y tremolo (forma seno-cuadrada y desfase estéreo hasta auto-pan).
 
+Las tomas no se cargan en RAM: se reproducen desde disco con `BufferingAudioReader` (4 s de lectura anticipada en un
+hilo propio), la forma de onda se calcula durante la grabación y se guarda como `.peaks`, y EXPORT MIX procesa por
+bloques. Una prueba graba 10 minutos sin perder muestras y con +0,4 MB de memoria; si el disco no da abasto, las
+muestras perdidas se cuentan y se avisa.
+
+## Looper (standalone)
+
+Página **LOOP**: grabar, cerrar, overdub, stop, undo/redo de la última capa y clear, hasta 60 s estéreo. El overdub
+nunca copia el bucle entero en el hilo de audio: cada bloque de 1024 muestras lleva la generación que contiene y se
+fusiona con la base cuando una nueva capa lo toca; deshacer solo descarta una generación (instantáneo).
+
+## MIDI
+
+Clic derecho en cualquier control → MIDI learn (CC). Acciones para footswitch: afinador, preset anterior/siguiente
+y los botones del looper. Program Change n carga el preset n. El hilo de audio solo encola los mensajes; se aplican
+en el hilo de la interfaz (100 Hz), así que ni los parámetros ni los presets se tocan desde el audio.
+
 ## Caja de ritmos (standalone)
 
 Página **DRUMS**: 8 voces sintetizadas (sin samples) en dos kits —*Studio* (modelado acústico con
@@ -85,6 +102,7 @@ build/POMANDrumAnalysis_artefacts/Release/POMANDrumAnalysis.exe previews/drums  
 build/POMANBench_artefacts/Release/POMANBench.exe            # CPU y aliasing por módulo
 build/POMANNamTests_artefacts/Release/POMANNamTests.exe external/NeuralAmpModelerCore/example_models  # NAM
 python Tests/check_presets.py                                 # IDs de los presets de fábrica
+build/POMANMidiTests_artefacts/Release/POMANMidiTests.exe    # MIDI learn, footswitch, PC, ráfagas
 build/POMANRecorderTests_artefacts/Release/POMANRecorderTests.exe  # grabación, latencia, mute/solo, overdub, export, metrónomo, cuenta atrás, sesiones
 ```
 

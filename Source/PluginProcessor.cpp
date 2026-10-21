@@ -209,6 +209,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     modulation.prepare (sampleRate, maxChunkSize);
     recorder->prepare (sampleRate, maxChunkSize);
     drums.prepare (sampleRate);
+    looper.prepare (sampleRate);
     tuner.prepare (sampleRate);
 
     inputGain.reset (sampleRate, 0.03);
@@ -313,6 +314,14 @@ void PomanProcessor::performAction (const juce::String& name)
         presetManager->loadNext();
     else if (name == "presetPrev")
         presetManager->loadPrevious();
+    else if (name == "looperMain")
+        looper.post (poman::Looper::Command::main);
+    else if (name == "looperStop")
+        looper.post (poman::Looper::Command::stop);
+    else if (name == "looperUndo")
+        looper.post (poman::Looper::Command::undo);
+    else if (name == "looperClear")
+        looper.post (poman::Looper::Command::clear);
 }
 
 void PomanProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -430,6 +439,9 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
         left[i] *= g;
         right[i] *= g;
     }
+
+    // The looper sits before the recorder, so a looped performance can be recorded in STUDIO.
+    looper.process (left, right, numSamples);
 
     // Records the finished rig sound, then layers the other tracks and the click on top.
     recorder->process (left, right, numSamples);

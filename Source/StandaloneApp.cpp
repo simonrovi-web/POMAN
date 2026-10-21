@@ -142,7 +142,9 @@ public:
         if (snapshotPath.isNotEmpty())
         {
             // --studio switches to the STUDIO page first (finds the page button by its text).
-            const juce::String page = commandLine.contains ("--studio") ? "STUDIO" : (commandLine.contains ("--drums") ? "DRUMS" : "");
+            const juce::String page = commandLine.contains ("--studio") ? "STUDIO"
+                                    : commandLine.contains ("--drums")  ? "DRUMS"
+                                    : commandLine.contains ("--loop")   ? "LOOP" : "";
             if (page.isNotEmpty())
                 juce::Timer::callAfterDelay (800, [this, page]
                 {

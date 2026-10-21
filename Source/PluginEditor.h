@@ -4,6 +4,7 @@
 #include "PluginProcessor.h"
 #include "StudioView.h"
 #include "DrumView.h"
+#include "LoopView.h"
 #include "RightClickable.h"
 
 class PomanLookAndFeel : public juce::LookAndFeel_V4
@@ -18,6 +19,8 @@ public:
                                bool highlighted, bool down) override;
     void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height, float sliderPos, float minPos,
                            float maxPos, juce::Slider::SliderStyle, juce::Slider&) override;
+    // A button's "fontSize" property overrides the default text size (e.g. the looper's big switch).
+    juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
 };
 
 // Vertical peak meter with decay and a clip LED that latches for a moment.
@@ -174,10 +177,11 @@ private:
     LevelMeter inputMeter, outputMeter;
 
     // Standalone only: RIG / STUDIO pages (a DAW does its own recording).
-    juce::TextButton rigPageButton { "RIG" }, studioPageButton { "STUDIO" }, drumsPageButton { "DRUMS" };
+    juce::TextButton rigPageButton { "RIG" }, studioPageButton { "STUDIO" }, drumsPageButton { "DRUMS" }, loopPageButton { "LOOP" };
     std::unique_ptr<StudioView> studioView;
     std::unique_ptr<DrumView> drumView;
-    enum class Page { rig, studio, drums };
+    std::unique_ptr<LoopView> loopView;
+    enum class Page { rig, studio, drums, loop };
     void showPage (Page page);
     TunerDisplay tunerDisplay;
 

@@ -11,6 +11,7 @@
 #include "dsp/DrumMachine.h"
 #include "dsp/GraphicEQ.h"
 #include "dsp/Harmonizer.h"
+#include "dsp/Looper.h"
 #include "dsp/NamAmp.h"
 #include "dsp/Modulation.h"
 #include "dsp/NoiseGate.h"
@@ -74,6 +75,7 @@ public:
     poman::PresetManager& getPresetManager() { return *presetManager; }
     poman::MultitrackRecorder& getRecorder() { return *recorder; }
     poman::DrumMachine& getDrums() { return drums; }
+    poman::Looper& getLooper() { return looper; }
     // Export layer that renders the drum pattern (empty when the drums are off).
     poman::MultitrackRecorder::ExportLayer makeDrumExportLayer();
 
@@ -131,6 +133,7 @@ private:
     poman::CabSim cab;
     poman::GraphicEQ graphicEq;
     poman::DrumMachine drums;
+    poman::Looper looper;
     poman::NamAmp namAmp;
     // The built-in amp and the NAM path differ in latency; the shorter one is padded so the
     // reported latency stays the same whichever amp is selected.
