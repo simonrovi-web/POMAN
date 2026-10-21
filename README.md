@@ -18,7 +18,8 @@ Input → [Afinador] → Gate → Comp → Submerge (octavador) → Drive (5 tip
 - **POMAN Amplifier** (11 modelos): Glass Clean, Modern Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch,
   Hot Rod Lead, Hi-Gain Rect, Tight Djent, Lead 51 (alta ganancia estilo 5150, 5 etapas) y Cali Lead (lead californiano
   tipo Mark, 5 etapas, pensado para el EQ en V). NAM Capture ocupa siempre el índice 10 de la lista; los modelos nuevos van detrás. Cada modelo define etapas de preamp (2-4), filtros de acoplo,
-  stack de tonos propio (frecuencias y voz de medios), sag y presencia. Las etapas no lineales van a 4x oversampling.
+  stack de tonos pasivo modelado del circuito (ecuación de Yeh y Smith, DAFx 2006, con valores Fender o Marshall según el
+  modelo), voz de medios propia, sag y presencia. Las etapas no lineales van a 4x oversampling.
 - **NAM Capture**: carga capturas de [Neural Amp Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore) (`.nam`, WaveNet/LSTM/A2)
   como amplificador. Se cargan y precalientan en el hilo de la interfaz y se intercambian con un try-lock; corren a su
   frecuencia de entrenamiento con remuestreo sinc (≈207 muestras de latencia a 44,1 kHz, 0 a 48 kHz) y se normalizan a

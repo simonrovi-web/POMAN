@@ -1,5 +1,6 @@
 ﻿// Offline render of every amp model and drive type: checks for NaN/silence/runaway levels
 // and prints RMS so the models can be level-matched.
+#include "dsp/ToneStack.h"
 #include "dsp/Looper.h"
 #include "dsp/CabSim.h"
 #include "dsp/Resampler.h"
@@ -13,6 +14,7 @@
 #include "dsp/Modulation.h"
 #include <algorithm>
 #include <cstdio>
+#include <tuple>
 #include <functional>
 
 namespace
@@ -778,6 +780,51 @@ int main()
         failures += limitOk ? 0 : 1;
         std::printf ("%s  %-24s accidental tap discarded (state %d), closes itself at %.0f s (state %d)\n", limitOk ? "PASS" : "FAIL",
                      "loop length limits", (int) shortLoop.getState(), full.getLengthSeconds(), (int) full.getState());
+    }
+
+    std::printf ("-- Passive tone stack (Yeh/Smith model) --\n");
+    {
+        using TS = poman::ToneStack;
+        const auto db = [] (double g) { return 20.0 * std::log10 (g); };
+        const auto mag = [] (const TS::Components& c, float t, float m, float b, double hz)
+        {
+            return TS::analogMagnitude (TS::analog (c, TS::treblePosition (t), TS::midPosition (m), TS::bassPosition (b)), hz);
+        };
+
+        // 1) The discretised filter matches the circuit (at the amp's 4x oversampled rate).
+        double worst = 0.0;
+        const double osRate = 192000.0;
+        for (const auto* c : { &TS::fender, &TS::marshall })
+            for (auto [t, m, b] : { std::tuple { 5.0f, 5.0f, 5.0f }, std::tuple { 10.0f, 0.0f, 10.0f }, std::tuple { 0.0f, 10.0f, 2.0f } })
+            {
+                const auto analog = TS::analog (*c, TS::treblePosition (t), TS::midPosition (m), TS::bassPosition (b));
+                const auto digital = TS::discretise (analog, osRate);
+                for (double hz : { 60.0, 250.0, 1000.0, 3000.0, 8000.0 })
+                    worst = std::max (worst, std::abs (db (TS::digitalMagnitude (digital, hz, osRate)) - db (TS::analogMagnitude (analog, hz))));
+            }
+        const bool matchOk = worst < 0.2;
+        failures += matchOk ? 0 : 1;
+        std::printf ("%s  %-24s digital vs circuit: worst %.3f dB\n", matchOk ? "PASS" : "FAIL", "tone stack accuracy", worst);
+
+        // 2) Classic behaviour.
+        const auto scoopDepth = [&] (const TS::Components& c)
+        {
+            double lowestMid = 1.0e9;
+            for (double hz = 200.0; hz <= 2000.0; hz *= 1.05)
+                lowestMid = std::min (lowestMid, mag (c, 5, 5, 5, hz));
+            return db (std::max (mag (c, 5, 5, 5, 80.0), mag (c, 5, 5, 5, 5000.0))) - db (lowestMid);
+        };
+        const double fenderScoop = scoopDepth (TS::fender), marshallScoop = scoopDepth (TS::marshall);
+        const double midRange = db (mag (TS::fender, 5, 10, 5, 500.0)) - db (mag (TS::fender, 5, 0, 5, 500.0));
+        const double trebleRange = db (mag (TS::fender, 10, 5, 5, 5000.0)) - db (mag (TS::fender, 0, 5, 5, 5000.0));
+        const double bassRange = db (mag (TS::fender, 5, 5, 10, 80.0)) - db (mag (TS::fender, 5, 5, 0, 80.0));
+        const double interaction = std::abs (db (mag (TS::fender, 10, 5, 5, 500.0)) - db (mag (TS::fender, 0, 5, 5, 500.0)));
+        // The Bassman's 25k mid pot is famously subtle (~6 dB at 500 Hz); treble and bass have more range.
+        const bool behaviourOk = fenderScoop > 4.0 && marshallScoop < fenderScoop && midRange > 4.0 && trebleRange > 6.0
+                              && bassRange > 6.0 && interaction > 0.5;
+        failures += behaviourOk ? 0 : 1;
+        std::printf ("%s  %-24s scoop Fender %.1f dB > Marshall %.1f dB; mid %.1f, treble %.1f, bass %.1f dB ranges; treble moves 500 Hz by %.1f dB\n",
+                     behaviourOk ? "PASS" : "FAIL", "tone stack behaviour", fenderScoop, marshallScoop, midRange, trebleRange, bassRange, interaction);
     }
 
     std::printf ("-- Modulation --\n");

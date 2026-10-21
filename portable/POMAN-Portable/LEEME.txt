@@ -1,8 +1,17 @@
-POMAN - Guitar Amp Suite (version portable 0.12.1)
+POMAN - Guitar Amp Suite (version portable 0.12.2)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.12.2
+- Controles de tono BASS / MID / TREBLE de los amplificadores modelados como
+  el circuito real (stack de tonos pasivo): ahora interactuan entre si y
+  dan el "scoop" de medios caracteristico. Los modelos limpios, Chime y
+  Cali Lead usan el circuito tipo Fender; los britanicos y de alta ganancia,
+  el tipo Marshall (menos scoop, mas medios). Volumen igual que antes.
+  Nota: como en un amplificador real, MID tiene menos recorrido que BASS y
+  TREBLE, y con todo a las 12 los medios ya suenan algo recortados.
 
 Novedades 0.12.1
 - Amplificador nuevo "Cali Lead": lead de alta ganancia estilo californiano
