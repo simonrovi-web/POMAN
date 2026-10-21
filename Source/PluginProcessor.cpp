@@ -205,7 +205,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     graphicEq.prepare (sampleRate);
     harmonizer.prepare (sampleRate);
     modulation.prepare (sampleRate, maxChunkSize);
-    recorder->prepare (sampleRate);
+    recorder->prepare (sampleRate, maxChunkSize);
     drums.prepare (sampleRate);
     tuner.prepare (sampleRate);
 
@@ -522,15 +522,21 @@ void PomanProcessor::getStateInformation (juce::MemoryBlock& destData)
         copyXmlToBinary (*xml, destData);
 }
 
-void PomanProcessor::renderDrumsOffline (juce::AudioBuffer<float>& mix)
+poman::MultitrackRecorder::ExportLayer PomanProcessor::makeDrumExportLayer()
 {
-    if (! drums.isEnabled() || mix.getNumChannels() < 2)
-        return;
+    if (! drums.isEnabled())
+        return {};
 
-    poman::DrumMachine offline;
-    offline.copySettingsFrom (drums);
-    offline.prepare (getSampleRate() > 0.0 ? getSampleRate() : 48000.0);
-    offline.process (mix.getWritePointer (0), mix.getWritePointer (1), mix.getNumSamples(), 0, recorder->getBpm());
+    // A private copy of the pattern renders chunk after chunk, exactly like live playback from 0:00.
+    auto offline = std::make_shared<poman::DrumMachine>();
+    offline->copySettingsFrom (drums);
+    offline->prepare (getSampleRate() > 0.0 ? getSampleRate() : 48000.0);
+    const double bpm = recorder->getBpm();
+    return [offline, bpm] (juce::AudioBuffer<float>& chunk, juce::int64 position)
+    {
+        if (chunk.getNumChannels() >= 2)
+            offline->process (chunk.getWritePointer (0), chunk.getWritePointer (1), chunk.getNumSamples(), position, bpm);
+    };
 }
 
 void PomanProcessor::setStateInformation (const void* data, int sizeInBytes)

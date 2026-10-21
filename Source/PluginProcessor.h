@@ -73,8 +73,8 @@ public:
     poman::PresetManager& getPresetManager() { return *presetManager; }
     poman::MultitrackRecorder& getRecorder() { return *recorder; }
     poman::DrumMachine& getDrums() { return drums; }
-    // Renders the drum pattern from 0:00 over the whole buffer (used by the mix export).
-    void renderDrumsOffline (juce::AudioBuffer<float>& mix);
+    // Export layer that renders the drum pattern (empty when the drums are off).
+    poman::MultitrackRecorder::ExportLayer makeDrumExportLayer();
 
     // Single reader of the EQ parameters, used by the audio path and the editor's response curve.
     poman::GraphicEQ::Settings getEqSettings() const;

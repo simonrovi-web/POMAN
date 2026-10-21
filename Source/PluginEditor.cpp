@@ -330,7 +330,7 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     if (processor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
     {
         studioView = std::make_unique<StudioView> (processor.getRecorder());
-        studioView->exportLayer = [this] (juce::AudioBuffer<float>& mix) { processor.renderDrumsOffline (mix); };
+        studioView->makeExportLayer = [this] { return processor.makeDrumExportLayer(); };
         addChildComponent (*studioView);
         drumView = std::make_unique<DrumView> (processor.getDrums(), processor.getRecorder());
         addChildComponent (*drumView);

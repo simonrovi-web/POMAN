@@ -10,10 +10,14 @@ namespace poman
 {
 // Four-track recorder for the finished rig sound.
 //
-// Threading: process() runs on the audio thread and never blocks. It streams the armed track to a
-// WAV file through a ThreadedWriter (disk I/O on a background thread) and mixes the existing takes
-// under a try-lock. Everything else runs on the message thread; takes are only swapped while
-// holding that lock, and old takes are destroyed outside it.
+// Memory stays bounded whatever the session length: takes are never held in RAM. The armed track
+// streams to a WAV file through a ThreadedWriter, and existing takes play back from disk through
+// BufferingAudioReaders that read ahead on a background thread. Waveform peaks are collected while
+// recording (and cached beside each WAV as .peaks), and the mix export renders in chunks.
+//
+// Threading: process() runs on the audio thread and never blocks on disk. Everything else runs on
+// the message thread; takes are only swapped under a lock the audio thread try-locks, and old
+// takes are destroyed outside it.
 class MultitrackRecorder
 {
 public:
@@ -25,7 +29,7 @@ public:
     ~MultitrackRecorder();
 
     // Audio thread ---------------------------------------------------------------------------
-    void prepare (double sampleRate);
+    void prepare (double sampleRate, int maxBlockSize);
     // Records the incoming rig output (when recording), then adds track playback and the click.
     void process (float* left, float* right, int numSamples) noexcept;
 
@@ -53,8 +57,20 @@ public:
     // Opens a session folder. Folders from 0.5.0 (no session.xml) load each track's newest WAV at 0:00.
     juce::Result openSession (const juce::File& folder);
     juce::File getRecordingsRoot() const { return recordingsRoot; }
-    // addLayers can mix more sources (e.g. the drum machine) into the full-length mix before limiting.
-    juce::Result exportMix (juce::File& writtenFile, const std::function<void (juce::AudioBuffer<float>&)>& addLayers = {});
+    // Extra sources for the export (e.g. the drum machine): called for each chunk, in order, with the
+    // chunk's timeline position, after the tracks are mixed and before limiting.
+    using ExportLayer = std::function<void (juce::AudioBuffer<float>& chunk, juce::int64 position)>;
+    juce::Result exportMix (juce::File& writtenFile, const ExportLayer& addLayers = {});
+
+    // How long a playback read may wait for the disk. 0 (the default) never blocks the audio thread;
+    // offline renders and tests can wait so nothing is skipped.
+    void setReadTimeoutMs (int ms) { readTimeoutMs = ms; }
+
+    // Samples the disk could not keep up with during the last take (0 when the take is complete).
+    juce::int64 getDroppedSamples() const { return droppedSamples.load(); }
+
+    // Peaks of the take being recorded so far (message thread; call regularly while recording).
+    const std::vector<float>& getLivePeaks();
     juce::File getSessionFolder() const { return sessionFolder; }
 
     void setCountIn (bool enabled) { countInEnabled.store (enabled); }
@@ -89,15 +105,18 @@ public:
 private:
     struct Take
     {
-        juce::AudioBuffer<float> audio;
-        juce::int64 start = 0;
-        int trim = 0; // samples dropped from the head of the file (latency compensation)
+        std::unique_ptr<juce::BufferingAudioReader> reader; // read by the audio thread
+        juce::int64 start = 0, length = 0;
+        int trim = 0;          // samples skipped at the head of the file (latency compensation)
+        int fileChannels = 2;
         std::vector<float> peaks;
         juce::File file;
     };
 
     void finishRecording();
-    std::unique_ptr<Take> loadTake (const juce::File& file, juce::int64 start, int trimSamples);
+    std::unique_ptr<Take> loadTake (const juce::File& file, juce::int64 start, int trimSamples, std::vector<float>* knownPeaks = nullptr);
+    std::vector<float> readPeaks (juce::AudioFormatReader& reader, int trimSamples) const;
+    void drainLivePeaks();
     void replaceTake (int track, std::unique_ptr<Take> take);
     void movePlayhead (juce::int64 sample);
     void addClick (float* left, float* right, int from, int to, juce::int64 position, juce::int64 origin) noexcept;
@@ -107,7 +126,17 @@ private:
     // ever written, so a same-named folder from another session can never be overwritten.
     bool sessionOwned = false;
     juce::AudioFormatManager formatManager;
-    juce::TimeSliceThread writerThread { "POMAN recorder" };
+    juce::TimeSliceThread writerThread { "POMAN recorder" }, readerThread { "POMAN playback" };
+    int readTimeoutMs = 0;
+    std::atomic<juce::int64> droppedSamples { 0 };
+    juce::AudioBuffer<float> playScratch;
+
+    // Peaks of the take in progress: the audio thread pushes one per samplesPerPeak through a FIFO.
+    juce::AbstractFifo livePeakFifo { 1 << 16 };
+    std::vector<float> livePeakStorage = std::vector<float> (1 << 16);
+    std::vector<float> livePeaks;
+    float livePeakMax = 0.0f;
+    int livePeakCount = 0;
 
     juce::SpinLock writerLock;
     std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> activeWriter;

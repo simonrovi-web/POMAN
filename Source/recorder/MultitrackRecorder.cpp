@@ -9,6 +9,7 @@ MultitrackRecorder::MultitrackRecorder (juce::File root)
     for (auto& v : trackVolume)
         v.store (0.8f);
     writerThread.startThread();
+    readerThread.startThread();
     newSession();
 }
 
@@ -16,12 +17,16 @@ MultitrackRecorder::~MultitrackRecorder()
 {
     finishRecording();
     saveSession();
+    for (int t = 0; t < numTracks; ++t)
+        replaceTake (t, nullptr); // readers must go before their thread
+    readerThread.stopThread (4000);
     writerThread.stopThread (4000);
 }
 
-void MultitrackRecorder::prepare (double newSampleRate)
+void MultitrackRecorder::prepare (double newSampleRate, int maxBlockSize)
 {
     sampleRate.store (newSampleRate);
+    playScratch.setSize (2, maxBlockSize);
     clickEnvelope = 0.0f;
 }
 
@@ -46,7 +51,20 @@ void MultitrackRecorder::process (float* left, float* right, int numSamples) noe
         {
             const int skip = (int) juce::jmax ((juce::int64) 0, takeStart - position);
             const float* channels[] { left + skip, right + skip };
-            activeWriter->write (channels, numSamples - skip);
+            if (! activeWriter->write (channels, numSamples - skip))
+                droppedSamples.fetch_add (numSamples - skip); // FIFO full: the disk is too slow
+
+            for (int i = skip; i < numSamples; ++i)
+            {
+                livePeakMax = juce::jmax (livePeakMax, std::abs (left[i]), std::abs (right[i]));
+                if (++livePeakCount == samplesPerPeak)
+                {
+                    if (livePeakFifo.getFreeSpace() > 0)
+                        livePeakFifo.write (1).forEach ([this] (int index) { livePeakStorage[(size_t) index] = livePeakMax; });
+                    livePeakMax = 0.0f;
+                    livePeakCount = 0;
+                }
+            }
         }
     }
 
@@ -67,17 +85,21 @@ void MultitrackRecorder::process (float* left, float* right, int numSamples) noe
                     continue;
 
                 const auto offset = position - take->start;
-                const auto length = (juce::int64) take->audio.getNumSamples();
                 const auto first = juce::jmax ((juce::int64) 0, -offset);
-                const auto last = juce::jmin ((juce::int64) numSamples, length - offset);
+                const auto last = juce::jmin ((juce::int64) juce::jmin (numSamples, playScratch.getNumSamples()), take->length - offset);
                 if (first >= last)
                     continue;
 
+                // Reads from the read-ahead buffer; if the disk has not caught up (just after a seek)
+                // this returns silence instead of waiting.
                 const float gain = trackVolume[(size_t) t].load();
                 const int n = (int) (last - first);
-                const int source = (int) (offset + first);
-                juce::FloatVectorOperations::addWithMultiply (left + first, take->audio.getReadPointer (0, source), gain, n);
-                juce::FloatVectorOperations::addWithMultiply (right + first, take->audio.getReadPointer (1, source), gain, n);
+                float* dest[] { playScratch.getWritePointer (0), playScratch.getWritePointer (1) };
+                take->reader->read (dest, take->fileChannels > 1 ? 2 : 1, take->trim + offset + first, n);
+                if (take->fileChannels == 1)
+                    juce::FloatVectorOperations::copy (dest[1], dest[0], n);
+                juce::FloatVectorOperations::addWithMultiply (left + first, dest[0], gain, n);
+                juce::FloatVectorOperations::addWithMultiply (right + first, dest[1], gain, n);
             }
         }
     }
@@ -200,6 +222,11 @@ juce::Result MultitrackRecorder::record()
 
     recordingFile = file;
     recordingTrack = track;
+    livePeaks.clear();
+    livePeakFifo.reset();
+    droppedSamples.store (0);
+    livePeakMax = 0.0f;
+    livePeakCount = 0;
     recordingStart = playhead.load();
     recordingTrim = latencyCompensation.load();
 
@@ -228,8 +255,16 @@ void MultitrackRecorder::finishRecording()
     state.store (State::playing); // keep the transport consistent while the file is finalised
     finished.reset();              // flushes the FIFO and closes the WAV
 
+    // Peaks were collected while recording; skip the ones covering the trimmed head.
+    drainLivePeaks();
+    if (livePeakCount > 0)
+        livePeaks.push_back (livePeakMax);
+    auto peaks = livePeaks;
+    const auto skipPeaks = (size_t) juce::jmin ((int) peaks.size(), recordingTrim / samplesPerPeak);
+    peaks.erase (peaks.begin(), peaks.begin() + (std::ptrdiff_t) skipPeaks);
+
     // The recorded rig output arrives late by the round trip, so drop that much from the head.
-    if (auto take = loadTake (recordingFile, recordingStart.load(), recordingTrim))
+    if (auto take = loadTake (recordingFile, recordingStart.load(), recordingTrim, &peaks))
     {
         replaceTake (recordingTrack.load(), std::move (take));
         saveSession();
@@ -242,7 +277,40 @@ void MultitrackRecorder::finishRecording()
     recordingTrack = -1;
 }
 
-std::unique_ptr<MultitrackRecorder::Take> MultitrackRecorder::loadTake (const juce::File& file, juce::int64 start, int trimSamples)
+namespace
+{
+// <take>.wav.peaks: magic, samples per peak, trim, count, then the float peaks.
+constexpr int peaksMagic = 0x504f4d50; // "POMP"
+
+juce::File peaksFileFor (const juce::File& wav) { return wav.getSiblingFile (wav.getFileName() + ".peaks"); }
+} // namespace
+
+std::vector<float> MultitrackRecorder::readPeaks (juce::AudioFormatReader& reader, int trimSamples) const
+{
+    // Streams the file in chunks: memory stays bounded even for very long takes.
+    std::vector<float> peaks;
+    constexpr int chunk = samplesPerPeak * 128;
+    juce::AudioBuffer<float> buffer ((int) juce::jmax (1u, reader.numChannels), chunk);
+    const auto length = reader.lengthInSamples - trimSamples;
+    peaks.reserve ((size_t) (length / samplesPerPeak + 1));
+    for (juce::int64 pos = 0; pos < length; pos += chunk)
+    {
+        const int n = (int) juce::jmin ((juce::int64) chunk, length - pos);
+        reader.read (&buffer, 0, n, trimSamples + pos, true, reader.numChannels > 1);
+        for (int from = 0; from < n; from += samplesPerPeak)
+        {
+            const int count = juce::jmin (samplesPerPeak, n - from);
+            float p = 0.0f;
+            for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+                p = juce::jmax (p, buffer.getMagnitude (ch, from, count));
+            peaks.push_back (p);
+        }
+    }
+    return peaks;
+}
+
+std::unique_ptr<MultitrackRecorder::Take> MultitrackRecorder::loadTake (const juce::File& file, juce::int64 start, int trimSamples,
+                                                                        std::vector<float>* knownPeaks)
 {
     std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file));
     if (reader == nullptr || reader->lengthInSamples <= trimSamples)
@@ -252,18 +320,58 @@ std::unique_ptr<MultitrackRecorder::Take> MultitrackRecorder::loadTake (const ju
     take->file = file;
     take->start = start;
     take->trim = trimSamples;
-    const auto length = (int) juce::jmin<juce::int64> (reader->lengthInSamples - trimSamples, std::numeric_limits<int>::max());
-    take->audio.setSize (2, length);
-    reader->read (&take->audio, 0, length, trimSamples, true, reader->numChannels > 1);
+    take->length = reader->lengthInSamples - trimSamples;
+    take->fileChannels = (int) reader->numChannels;
+    const auto expectedPeaks = (size_t) ((take->length + samplesPerPeak - 1) / samplesPerPeak);
 
-    take->peaks.resize ((size_t) (length + samplesPerPeak - 1) / samplesPerPeak);
-    for (size_t p = 0; p < take->peaks.size(); ++p)
+    // Peaks: collected while recording, else from the .peaks cache, else scanned (and cached).
+    const auto cache = peaksFileFor (file);
+    if (knownPeaks != nullptr && knownPeaks->size() + 2 >= expectedPeaks && knownPeaks->size() <= expectedPeaks + 2)
     {
-        const int from = (int) p * samplesPerPeak;
-        const int n = juce::jmin (samplesPerPeak, length - from);
-        take->peaks[p] = juce::jmax (take->audio.getMagnitude (0, from, n), take->audio.getMagnitude (1, from, n));
+        take->peaks = std::move (*knownPeaks);
     }
+    else if (juce::FileInputStream in (cache); in.openedOk() && in.readInt() == peaksMagic && in.readInt() == samplesPerPeak
+                                                && in.readInt() == trimSamples)
+    {
+        const int count = in.readInt();
+        if (count >= 0 && (size_t) count == expectedPeaks)
+        {
+            take->peaks.resize ((size_t) count);
+            in.read (take->peaks.data(), count * (int) sizeof (float));
+        }
+    }
+    if (take->peaks.empty())
+        take->peaks = readPeaks (*reader, trimSamples);
+    take->peaks.resize (expectedPeaks, 0.0f);
+
+    if (! cache.existsAsFile() || knownPeaks != nullptr)
+    {
+        cache.deleteFile();
+        if (juce::FileOutputStream out (cache); out.openedOk())
+        {
+            out.writeInt (peaksMagic);
+            out.writeInt (samplesPerPeak);
+            out.writeInt (trimSamples);
+            out.writeInt ((int) take->peaks.size());
+            out.write (take->peaks.data(), take->peaks.size() * sizeof (float));
+        }
+    }
+
+    // About 4 s of read-ahead; reads on the audio thread never wait unless a timeout is set.
+    take->reader = std::make_unique<juce::BufferingAudioReader> (reader.release(), readerThread, (int) (sampleRate.load() * 4.0));
+    take->reader->setReadTimeout (readTimeoutMs);
     return take;
+}
+
+void MultitrackRecorder::drainLivePeaks()
+{
+    livePeakFifo.read (livePeakFifo.getNumReady()).forEach ([this] (int index) { livePeaks.push_back (livePeakStorage[(size_t) index]); });
+}
+
+const std::vector<float>& MultitrackRecorder::getLivePeaks()
+{
+    drainLivePeaks();
+    return livePeaks;
 }
 
 void MultitrackRecorder::replaceTake (int track, std::unique_ptr<Take> take)
@@ -386,7 +494,7 @@ MultitrackRecorder::TrackInfo MultitrackRecorder::getTrackInfo (int track) const
     {
         info.hasAudio = true;
         info.start = take->start;
-        info.length = take->audio.getNumSamples();
+        info.length = take->length;
         info.peaks = &take->peaks;
         info.fileName = take->file.getFileName();
     }
@@ -398,17 +506,15 @@ juce::int64 MultitrackRecorder::getSessionLength() const
     juce::int64 end = 0;
     for (const auto& take : takes)
         if (take != nullptr)
-            end = juce::jmax (end, take->start + take->audio.getNumSamples());
+            end = juce::jmax (end, take->start + take->length);
     return end;
 }
 
-juce::Result MultitrackRecorder::exportMix (juce::File& writtenFile, const std::function<void (juce::AudioBuffer<float>&)>& addLayers)
+juce::Result MultitrackRecorder::exportMix (juce::File& writtenFile, const ExportLayer& addLayers)
 {
     const auto length = getSessionLength();
     if (length <= 0)
         return juce::Result::fail ("Nothing recorded yet.");
-    if (length > std::numeric_limits<int>::max())
-        return juce::Result::fail ("Session too long to export.");
     if (! sessionFolder.createDirectory())
         return juce::Result::fail ("Cannot create " + sessionFolder.getFullPathName());
 
@@ -416,26 +522,16 @@ juce::Result MultitrackRecorder::exportMix (juce::File& writtenFile, const std::
     for (const auto& s : trackSolo)
         anySolo = anySolo || s.load();
 
-    juce::AudioBuffer<float> mix (2, (int) length);
-    mix.clear();
+    // Plain (non-buffering) readers: the export reads each file sequentially exactly once.
+    struct Source { std::unique_ptr<juce::AudioFormatReader> reader; juce::int64 start, length; int trim, channels; float gain; };
+    std::vector<Source> sources;
     for (int t = 0; t < numTracks; ++t)
     {
         const auto* take = takes[(size_t) t].get();
         if (take == nullptr || trackMuted[(size_t) t].load() || (anySolo && ! trackSolo[(size_t) t].load()))
             continue;
-        for (int ch = 0; ch < 2; ++ch)
-            mix.addFrom (ch, (int) take->start, take->audio, ch, 0, take->audio.getNumSamples(), trackVolume[(size_t) t].load());
-    }
-
-    if (addLayers)
-        addLayers (mix);
-
-    // Soft safety limit so a hot mix never wraps when converted to 24-bit.
-    for (int ch = 0; ch < 2; ++ch)
-    {
-        auto* d = mix.getWritePointer (ch);
-        for (int i = 0; i < mix.getNumSamples(); ++i)
-            d[i] = std::abs (d[i]) <= 0.9f ? d[i] : std::copysign (0.9f + 0.1f * std::tanh ((std::abs (d[i]) - 0.9f) / 0.1f), d[i]);
+        if (std::unique_ptr<juce::AudioFormatReader> r (formatManager.createReaderFor (take->file)); r != nullptr)
+            sources.push_back ({ std::move (r), take->start, take->length, take->trim, take->fileChannels, trackVolume[(size_t) t].load() });
     }
 
     writtenFile = sessionFolder.getNonexistentChildFile ("Mix", ".wav", false);
@@ -448,8 +544,46 @@ juce::Result MultitrackRecorder::exportMix (juce::File& writtenFile, const std::
                                                    .withSampleRate (sampleRate.load())
                                                    .withNumChannels (2)
                                                    .withBitsPerSample (24));
-    if (writer == nullptr || ! writer->writeFromAudioSampleBuffer (mix, 0, mix.getNumSamples()))
-        return juce::Result::fail ("Writing the mix failed.");
+    if (writer == nullptr)
+        return juce::Result::fail ("Cannot create a WAV writer.");
+
+    constexpr int chunk = 1 << 16;
+    juce::AudioBuffer<float> mix (2, chunk), read (2, chunk);
+    for (juce::int64 pos = 0; pos < length; pos += chunk)
+    {
+        const int n = (int) juce::jmin ((juce::int64) chunk, length - pos);
+        juce::AudioBuffer<float> view (mix.getArrayOfWritePointers(), 2, n);
+        view.clear();
+
+        for (auto& s : sources)
+        {
+            const auto first = juce::jmax ((juce::int64) 0, s.start - pos);
+            const auto last = juce::jmin ((juce::int64) n, s.start + s.length - pos);
+            if (first >= last)
+                continue;
+            const int count = (int) (last - first);
+            float* dest[] { read.getWritePointer (0), read.getWritePointer (1) };
+            s.reader->read (dest, s.channels > 1 ? 2 : 1, s.trim + pos + first - s.start, count);
+            if (s.channels == 1)
+                juce::FloatVectorOperations::copy (dest[1], dest[0], count);
+            for (int ch = 0; ch < 2; ++ch)
+                view.addFrom (ch, (int) first, read, ch, 0, count, s.gain);
+        }
+
+        if (addLayers)
+            addLayers (view, pos);
+
+        // Soft safety limit so a hot mix never wraps when converted to 24-bit.
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            auto* d = view.getWritePointer (ch);
+            for (int i = 0; i < n; ++i)
+                d[i] = std::abs (d[i]) <= 0.9f ? d[i] : std::copysign (0.9f + 0.1f * std::tanh ((std::abs (d[i]) - 0.9f) / 0.1f), d[i]);
+        }
+
+        if (! writer->writeFromAudioSampleBuffer (view, 0, n))
+            return juce::Result::fail ("Writing the mix failed.");
+    }
 
     return juce::Result::ok();
 }

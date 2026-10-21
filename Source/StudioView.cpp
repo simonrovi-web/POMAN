@@ -62,8 +62,24 @@ void StudioView::Lane::paint (juce::Graphics& g)
     {
         const auto x0 = (float) (recorder.getRecordingStart() / samplesPerPixel);
         const auto x1 = (float) (recorder.getPlayhead() / samplesPerPixel);
-        g.setColour (recordRed.withAlpha (0.25f));
+        g.setColour (recordRed.withAlpha (0.2f));
         g.fillRect (x0, 0.0f, juce::jmax (1.0f, x1 - x0), bounds.getHeight());
+
+        // The take's waveform as it is recorded (peaks arrive from the audio thread).
+        const auto& live = recorder.getLivePeaks();
+        g.setColour (recordRed.withAlpha (0.85f));
+        const double peaksPerPixel = samplesPerPixel / poman::MultitrackRecorder::samplesPerPeak;
+        for (int x = (int) x0; x < (int) x1 && x < getWidth(); ++x)
+        {
+            const auto p0 = (size_t) juce::jmax (0.0, (x - x0) * peaksPerPixel);
+            const auto p1 = juce::jmin (live.size(), (size_t) ((x + 1 - x0) * peaksPerPixel) + 1);
+            float peak = 0.0f;
+            for (auto p = p0; p < p1; ++p)
+                peak = juce::jmax (peak, live[p]);
+            const float h = juce::jmin (1.0f, peak) * bounds.getHeight() * 0.9f;
+            g.fillRect ((float) x, mid - h * 0.5f, 1.0f, juce::jmax (1.0f, h));
+        }
+
         g.setColour (recordRed);
         g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
         g.drawText (recorder.isCountingIn() ? "COUNT-IN" : "RECORDING", juce::Rectangle<float> (x0 + 6.0f, 4.0f, 100.0f, 16.0f),
@@ -114,7 +130,13 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
         const bool wasRecording = recorder.getState() == poman::MultitrackRecorder::State::recording;
         recorder.stop();
         if (wasRecording)
-            setStatus ("Take saved in " + recorder.getSessionFolder().getFileName());
+        {
+            if (const auto dropped = recorder.getDroppedSamples(); dropped > 0)
+                setStatus ("Warning: the disk was too slow, " + juce::String (1000.0 * (double) dropped / recorder.getSampleRate(), 0)
+                               + " ms of the take are missing. Record to a faster drive.", true);
+            else
+                setStatus ("Take saved in " + recorder.getSessionFolder().getFileName());
+        }
         refreshControls();
     };
     recordButton.onClick = [this]
@@ -167,7 +189,7 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
     exportButton.onClick = [this]
     {
         juce::File written;
-        const auto result = recorder.exportMix (written, exportLayer);
+        const auto result = recorder.exportMix (written, makeExportLayer ? makeExportLayer() : poman::MultitrackRecorder::ExportLayer {});
         setStatus (result.wasOk() ? "Exported " + written.getFullPathName() : result.getErrorMessage(), result.failed());
     };
 

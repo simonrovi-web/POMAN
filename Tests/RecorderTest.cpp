@@ -1,6 +1,11 @@
 // Offline checks of the multitrack recorder: record, latency trim, playback, mute/solo, overdub, export, click.
 #include "recorder/MultitrackRecorder.h"
 #include <cstdio>
+#if JUCE_WINDOWS
+ #include <windows.h>
+ #include <psapi.h>
+ #pragma comment (lib, "psapi.lib")
+#endif
 
 namespace
 {
@@ -41,7 +46,8 @@ int main()
 
     {
         poman::MultitrackRecorder recorder (root);
-        recorder.prepare (sampleRate);
+        recorder.prepare (sampleRate, blockSize);
+        recorder.setReadTimeoutMs (2000); // offline: let playback wait for the disk
         recorder.setLatencyCompensation (1000);
         recorder.setCountIn (false); // sections 1-7 record immediately; the count-in has its own checks below
 
@@ -60,6 +66,10 @@ int main()
         expect (info.length == (juce::int64) sampleRate - 1000, "take trimmed by latency compensation",
                 juce::String (info.length) + " samples");
         expect (root.findChildFiles (juce::File::findFiles, true, "*.wav").size() == 1, "WAV file written to session folder");
+        // Waveform peaks come from the recording itself and are cached beside the WAV.
+        const auto expectedPeaks = (size_t) ((info.length + poman::MultitrackRecorder::samplesPerPeak - 1) / poman::MultitrackRecorder::samplesPerPeak);
+        expect (info.peaks != nullptr && info.peaks->size() == expectedPeaks && root.findChildFiles (juce::File::findFiles, true, "*.peaks").size() == 1,
+                "live peaks kept and cached (.peaks)", juce::String (info.peaks != nullptr ? (int) info.peaks->size() : -1) + " peaks");
 
         // 2) Playback: the impulse recorded 1000 samples late must now sit at sample 0.
         recorder.rewind();
@@ -126,12 +136,15 @@ int main()
         {
             juce::File layered;
             bool called = false;
-            const auto res = recorder.exportMix (layered, [&] (juce::AudioBuffer<float>& m)
+            const auto res = recorder.exportMix (layered, [&] (juce::AudioBuffer<float>& m, juce::int64 position)
             {
                 called = true;
                 m.clear();
-                m.setSample (0, 10, 0.5f);
-                m.setSample (1, 10, 0.5f);
+                if (position == 0)
+                {
+                    m.setSample (0, 10, 0.5f);
+                    m.setSample (1, 10, 0.5f);
+                }
             });
             std::unique_ptr<juce::AudioFormatReader> r (fm.createReaderFor (layered));
             juce::AudioBuffer<float> back (2, 200);
@@ -161,7 +174,8 @@ int main()
     // 8) Count-in: one bar (2 s at 120 BPM) of click with nothing recorded, then the take starts at 0:00.
     {
         poman::MultitrackRecorder recorder (root);
-        recorder.prepare (sampleRate);
+        recorder.prepare (sampleRate, blockSize);
+        recorder.setReadTimeoutMs (2000); // offline: let playback wait for the disk
         recorder.setLatencyCompensation (1000);
         recorder.setBpm (120.0);
         recorder.setCountIn (true);
@@ -210,7 +224,8 @@ int main()
         const auto folder = recorder.getSessionFolder();
 
         poman::MultitrackRecorder reopened (root);
-        reopened.prepare (sampleRate);
+        reopened.prepare (sampleRate, blockSize);
+        reopened.setReadTimeoutMs (2000);
         const auto opened = reopened.openSession (folder);
         const auto again = reopened.getTrackInfo (0);
         expect (opened.wasOk() && again.hasAudio && again.start == info.start && again.length == info.length,
@@ -234,12 +249,62 @@ int main()
         }
 
         poman::MultitrackRecorder recorder (root);
-        recorder.prepare (sampleRate);
+        recorder.prepare (sampleRate, blockSize);
+        recorder.setReadTimeoutMs (2000); // offline: let playback wait for the disk
         const auto opened = recorder.openSession (legacy);
         const auto info = recorder.getTrackInfo (1);
         expect (opened.wasOk() && info.hasAudio && info.start == 0 && info.length == 4800 && ! recorder.getTrackInfo (0).hasAudio,
                 "0.5.0 folder without session.xml opens");
         expect (recorder.openSession (root.getChildFile ("Nope")).failed(), "missing folder is reported");
+    }
+
+    // 11) A 10-minute take must not be loaded into RAM (it used to cost ~230 MB as floats).
+    {
+        const auto workingSetMb = []
+        {
+           #if JUCE_WINDOWS
+            PROCESS_MEMORY_COUNTERS counters {};
+            GetProcessMemoryInfo (GetCurrentProcess(), &counters, sizeof (counters));
+            return (double) counters.WorkingSetSize / (1024.0 * 1024.0);
+           #else
+            return 0.0;
+           #endif
+        };
+
+        poman::MultitrackRecorder recorder (root);
+        recorder.prepare (sampleRate, blockSize);
+        recorder.setReadTimeoutMs (2000);
+        recorder.setCountIn (false);
+        recorder.armTrack (0);
+        recorder.record();
+
+        const int total = (int) sampleRate * 600;
+        juce::AudioBuffer<float> block (2, blockSize);
+        juce::Random rng (11);
+        for (int pos = 0, n = 0; pos < total; pos += blockSize, ++n)
+        {
+            for (int ch = 0; ch < 2; ++ch)
+                for (int i = 0; i < blockSize; ++i)
+                    block.setSample (ch, i, 0.1f * (rng.nextFloat() - 0.5f));
+            recorder.process (block.getWritePointer (0), block.getWritePointer (1), blockSize);
+            if (n % 8 == 7)
+                juce::Thread::sleep (1); // offline is far faster than real time: let the disk writer keep up
+        }
+
+        const double before = workingSetMb();
+        recorder.stop(); // finalises the WAV and opens the take for playback
+        recorder.rewind();
+        recorder.play();
+        for (int i = 0; i < 400; ++i) // ~2 s of playback
+            recorder.process (block.getWritePointer (0), block.getWritePointer (1), blockSize);
+        recorder.stop();
+        const double grown = workingSetMb() - before;
+
+        const auto info = recorder.getTrackInfo (0);
+        const bool ok = info.hasAudio && recorder.getDroppedSamples() == 0 && info.length >= (juce::int64) total && grown < 40.0;
+        expect (ok, "10-min take streams from disk",
+                juce::String (info.length / sampleRate, 1) + " s, dropped " + juce::String (recorder.getDroppedSamples())
+                    + ", memory +" + juce::String (grown, 1) + " MB");
     }
 
     root.deleteRecursively();
