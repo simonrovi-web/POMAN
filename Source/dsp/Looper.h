@@ -16,10 +16,24 @@ namespace poman
 //
 // Commands arrive through a lock-free queue (UI buttons and MIDI footswitches) and are applied at
 // the start of the next block.
+//
+// Tempo sync (optional): closing a loop rounds it to whole 4/4 bars at the current tempo (a late
+// press trims the excess and keeps playing in phase, an early one records on to the bar line). While
+// the studio/drums transport runs, recording waits for the next beat and a stopped loop restarts on
+// its own grid, so the loop stays locked to the drums.
 class Looper
 {
 public:
-    enum class State { empty, recording, playing, overdubbing, stopped };
+    enum class State { empty, recording, playing, overdubbing, stopped, waiting };
+    static constexpr int beatsPerBar = 4;
+
+    // Where the studio/drums transport is at the first sample of a block.
+    struct Transport
+    {
+        bool running = false;
+        juce::int64 sample = 0;
+        double bpm = 0.0;
+    };
     enum class Command { main, stop, undo, clear };
     static constexpr double maxSeconds = 60.0;
     static constexpr int tagBlock = 1024;
@@ -45,6 +59,9 @@ public:
     }
 
     void setLevel (float gain) { level.store (gain); }
+    void setSync (bool on) { sync.store (on); } // any thread
+    bool isSynced() const { return sync.load(); }
+    int getBars() const { return bars.load(); } // whole bars of a synced loop, 0 otherwise
     float getLevel() const { return level.load(); }
 
     State getState() const { return state.load(); }
@@ -55,8 +72,9 @@ public:
     bool canRedo() const { return redoable.load(); }
 
     // Audio thread: records/overdubs the incoming signal and adds the loop to it.
-    void process (float* left, float* right, int numSamples) noexcept
+    void process (float* left, float* right, int numSamples, const Transport& newTransport = {}) noexcept
     {
+        transport = newTransport;
         applyCommands();
         auto s = state.load();
         if (s == State::empty || s == State::stopped)
@@ -65,13 +83,39 @@ public:
         const float gain = level.load();
         for (int i = 0; i < numSamples; ++i)
         {
+            if (s == State::waiting)
+            {
+                const juce::int64 now = transport.sample + i;
+                if (! transport.running)
+                    s = waitingFor; // transport stopped meanwhile: go now
+                else if (waitingFor == State::recording && now % juce::jmax ((juce::int64) 1, (juce::int64) std::llround (beatSamples())) == 0)
+                    s = State::recording, recordStart = now, pos = 0;
+                else if (waitingFor == State::playing && length > 0 && (now - recordStart) % length == 0)
+                    s = State::playing, pos = 0;
+                if (s == State::waiting)
+                    continue;
+                state.store (s);
+            }
+
             if (s == State::recording)
             {
                 baseL[(size_t) pos] = left[i];
                 baseR[(size_t) pos] = right[i];
-                if (++pos >= capacity) // full: close the loop automatically
+                ++pos;
+                if (pendingLength > 0 && pos >= pendingLength) // synced close reached the bar line
+                {
+                    length = pendingLength;
+                    pendingLength = 0;
+                    pos = 0;
+                    s = pendingState;
+                    state.store (s);
+                    if (s == State::stopped)
+                        break;
+                }
+                else if (pos >= capacity) // full: close the loop automatically
                 {
                     length = capacity;
+                    pendingLength = 0;
                     pos = 0;
                     s = State::playing;
                     state.store (s);
@@ -106,6 +150,7 @@ public:
 
         position.store (pos);
         lengthSamples.store (s == State::recording ? pos : length); // also covers the automatic close at the limit
+        bars.store (synced && length > 0 ? juce::roundToInt (length / barSamples()) : 0);
     }
 
 private:
@@ -124,6 +169,8 @@ private:
             case Command::main:
                 if (s == State::empty)
                     startRecording();
+                else if (s == State::waiting)
+                    clearNow(); // pressed again before the beat: cancel
                 else if (s == State::recording)
                     closeLoop (State::playing);
                 else if (s == State::playing)
@@ -133,12 +180,19 @@ private:
                 else if (s == State::stopped)
                 {
                     pos = 0;
-                    state.store (State::playing);
+                    if (synced && transport.running && recordStart >= 0)
+                        waitingFor = State::playing, state.store (State::waiting); // back on the loop's own grid
+                    else
+                        state.store (State::playing);
                 }
                 break;
 
             case Command::stop:
-                if (s == State::recording)
+                if (s == State::waiting && waitingFor == State::recording)
+                    clearNow();
+                else if (s == State::waiting)
+                    state.store (State::stopped);
+                else if (s == State::recording)
                     closeLoop (State::stopped);
                 else if (s == State::playing || s == State::overdubbing)
                 {
@@ -168,11 +222,25 @@ private:
         lengthSamples.store (length);
     }
 
+    double beatSamples() const noexcept { return transport.bpm > 0.0 ? sampleRate * 60.0 / transport.bpm : 0.0; }
+    double barSamples() const noexcept { return beatSamples() * beatsPerBar; }
+
     void startRecording() noexcept
     {
         pos = 0;
         length = 0;
-        state.store (State::recording);
+        pendingLength = 0;
+        synced = sync.load() && transport.bpm > 0.0;
+        recordStart = transport.running ? transport.sample : -1;
+        if (synced && transport.running)
+        {
+            waitingFor = State::recording; // starts on the next beat of the drums
+            state.store (State::waiting);
+        }
+        else
+        {
+            state.store (State::recording);
+        }
     }
 
     void closeLoop (State next) noexcept
@@ -180,6 +248,30 @@ private:
         if (pos < (int) (sampleRate * 0.1)) // too short to be intentional: start over
         {
             clearNow();
+            return;
+        }
+        if (synced && pendingLength == 0)
+        {
+            // Round to the nearest whole number of bars (at least one) that fits the buffer.
+            const double bar = barSamples();
+            const int maxBars = juce::jmax (1, (int) (capacity / bar));
+            const int wholeBars = juce::jlimit (1, maxBars, juce::roundToInt (pos / bar));
+            const int target = (int) std::llround (wholeBars * bar);
+            if (target > pos)
+            {
+                pendingLength = target; // keep recording to the bar line, then close
+                pendingState = next;
+                return;
+            }
+            // Pressed late: the loop ends on the bar line and playback continues in phase.
+            length = target;
+            pos = next == State::stopped ? 0 : pos - target;
+            state.store (next);
+            return;
+        }
+        if (pendingLength > 0)
+        {
+            pendingState = next; // already closing on the bar line: only the destination changes
             return;
         }
         length = pos;
@@ -217,7 +309,10 @@ private:
         std::fill (tags.begin(), tags.end(), noTag);
         generation = 0;
         undoneGeneration = noTag - 1;
-        pos = length = 0;
+        pos = length = pendingLength = 0;
+        synced = false;
+        recordStart = -1;
+        bars.store (0);
         position.store (0);
         lengthSamples.store (0);
         state.store (State::empty);
@@ -232,6 +327,11 @@ private:
 
     double sampleRate = 0.0;
     int capacity = 0, pos = 0, length = 0;
+    Transport transport;
+    bool synced = false;              // this loop was recorded with sync on
+    int pendingLength = 0;            // synced close: record until here
+    State pendingState = State::playing, waitingFor = State::recording;
+    juce::int64 recordStart = -1;     // transport sample where recording began (-1: transport stopped)
     std::vector<float> baseL, baseR, dubL, dubR;
     std::vector<int> tags;
     int generation = 0, undoneGeneration = noTag - 1;
@@ -239,7 +339,8 @@ private:
     juce::AbstractFifo commands { 32 };
     std::array<Command, 32> commandStorage {};
     std::atomic<State> state { State::empty };
-    std::atomic<int> position { 0 }, lengthSamples { 0 };
+    std::atomic<int> position { 0 }, lengthSamples { 0 }, bars { 0 };
+    std::atomic<bool> sync { false };
     std::atomic<bool> undoable { false }, redoable { false };
     std::atomic<float> level { 1.0f };
 };

@@ -2,12 +2,17 @@
 
 #include "DspCommon.h"
 #include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 #include <juce_data_structures/juce_data_structures.h>
 #include <atomic>
+#include <memory>
 
 namespace poman
 {
-// Synthesised 8-voice drum machine with a 16-step pattern (one bar of 16ths) and two kits.
+// 8-voice drum machine with a 16-step pattern (one bar of 16ths). Kits: modelled acoustic kits
+// (Studio, Rock, Metal, Vintage: one voice model with different tuning, damping and attack), the dry
+// analogue-style Electronic kit, and Samples: a folder of the user's own WAV files, mapped to the
+// instruments by file name, with the Studio voice standing in for any instrument without a sample.
 //
 // Timing is derived only from the timeline position and tempo, never from block boundaries, so a
 // bar renders identically live, after a seek, or offline for the mix export. All per-sample state
@@ -19,11 +24,53 @@ public:
     static constexpr int numInstruments = 8;
     static constexpr int numSteps = 16;
     enum Instrument { kick, snare, clap, closedHat, openHat, lowTom, highTom, crash };
-    // Studio: modelled acoustic kit with room and glue compression. Electronic: the dry analogue-style kit.
-    enum class Kit { studio, electronic, count };
+    // Saved states store the index: new kits are appended.
+    enum class Kit { studio, electronic, rock, metal, vintage, samples, count };
 
     static juce::StringArray instrumentNames() { return { "KICK", "SNARE", "CLAP", "CL HAT", "OP HAT", "LO TOM", "HI TOM", "CRASH" }; }
-    static juce::StringArray kitNames() { return { "Studio", "Electronic" }; }
+    static juce::StringArray kitNames() { return { "Studio", "Electronic", "Rock", "Metal", "Vintage", "Samples" }; }
+
+    // Instrument a sample file is for, from its name (English, Spanish and common short codes), or -1.
+    static int instrumentForFileName (const juce::String& fileName)
+    {
+        const auto name = fileName.toLowerCase();
+        juce::StringArray tokens;
+        tokens.addTokens (name.retainCharacters ("abcdefghijklmnopqrstuvwxyz0123456789 _-.").replaceCharacters ("_-.", "   "), " ", {});
+        tokens.removeEmptyStrings();
+        const auto hasToken = [&tokens] (std::initializer_list<const char*> codes)
+        {
+            for (auto* code : codes)
+                for (const auto& t : tokens)
+                    if (t == code || (t.startsWith (code) && t.substring ((int) std::strlen (code)).containsOnly ("0123456789")))
+                        return true;
+            return false;
+        };
+        const auto has = [&name] (std::initializer_list<const char*> words)
+        {
+            for (auto* w : words)
+                if (name.contains (w))
+                    return true;
+            return false;
+        };
+
+        if (has ({ "open", "abierto" }) || hasToken ({ "ohh", "oh", "ohat" }))
+            return openHat;
+        if (has ({ "hat", "charles", "hihat" }) || hasToken ({ "hh", "chh", "ch" }))
+            return closedHat;
+        if (has ({ "crash", "cymbal", "ride", "splash", "china", "plato" }) || hasToken ({ "cy", "cr" }))
+            return crash;
+        if (has ({ "clap", "palmas" }) || hasToken ({ "cp" }))
+            return clap;
+        if (has ({ "snare", "caja", "rim" }) || hasToken ({ "sd", "sn" }))
+            return snare;
+        if (has ({ "kick", "bombo", "bassdrum", "bass drum" }) || hasToken ({ "bd", "kd" }))
+            return kick;
+        if (has ({ "floor", "low tom", "lo tom", "tom low", "tomlow", "tom grave", "goliat" }) || hasToken ({ "ft", "lt", "tom3", "tom4" }))
+            return lowTom;
+        if (has ({ "tom" }) || hasToken ({ "ht", "mt" }))
+            return highTom;
+        return -1;
+    }
 
     struct PatternPreset
     {
@@ -79,6 +126,8 @@ public:
         room.store (other.room.load());
         kit.store (other.kit.load());
         enabled.store (other.enabled.load());
+        sourceKit = other.sourceKit; // shared, read-only; prepare() builds this machine's own copy
+        installSampleKit();
     }
 
     void prepare (double newSampleRate)
@@ -96,6 +145,7 @@ public:
         p.dryLevel = 0.0f;
         roomReverb.setParameters (p);
         roomReverb.setSampleRate (sampleRate);
+        installSampleKit(); // at the new rate
         reset();
     }
 
@@ -175,6 +225,83 @@ public:
     void setRoom (float amount) { room.store (juce::jlimit (0.0f, 1.0f, amount)); }
     float getRoom() const { return room.load(); }
     void setKit (int k) { kit.store (juce::jlimit (0, (int) Kit::count - 1, k)); }
+
+    // Message thread. Reads a folder of WAV/AIFF files into the Samples kit and selects it. Each
+    // instrument takes up to two files (the louder one plays the accents); missing ones use the
+    // Studio voice. Samples are converted to the engine's rate, longer ones cut at 4 s.
+    juce::Result loadSampleKit (const juce::File& folder)
+    {
+        auto files = folder.findChildFiles (juce::File::findFiles, false, "*.wav;*.aif;*.aiff");
+        if (files.isEmpty())
+            return juce::Result::fail ("No WAV or AIFF files in " + folder.getFullPathName());
+        struct ByName { static int compareElements (const juce::File& a, const juce::File& b) { return a.getFileName().compareNatural (b.getFileName()); } } order;
+        files.sort (order);
+
+        juce::AudioFormatManager formats;
+        formats.registerBasicFormats();
+        auto source = std::make_shared<SourceKit>();
+        source->folder = folder;
+        for (const auto& file : files)
+        {
+            const int instrument = instrumentForFileName (file.getFileNameWithoutExtension());
+            if (instrument < 0)
+                continue;
+            std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+            if (reader == nullptr || reader->lengthInSamples < 8)
+                continue;
+            SourceSample s;
+            s.name = file.getFileName();
+            s.rate = reader->sampleRate;
+            const int length = (int) juce::jmin (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 4.0));
+            s.audio.setSize (2, length);
+            reader->read (&s.audio, 0, length, 0, true, reader->numChannels > 1); // mono files play in both channels
+            if (reader->numChannels == 1)
+                s.audio.copyFrom (1, 0, s.audio, 0, 0, length);
+            s.loudness = s.audio.getRMSLevel (0, 0, juce::jmin (length, (int) (reader->sampleRate * 0.2)));
+            source->samples[(size_t) instrument].push_back (std::move (s));
+        }
+
+        int assigned = 0;
+        for (auto& list : source->samples)
+        {
+            std::sort (list.begin(), list.end(), [] (const SourceSample& a, const SourceSample& b) { return a.loudness < b.loudness; });
+            assigned += list.empty() ? 0 : 1;
+        }
+        if (assigned == 0)
+            return juce::Result::fail ("No file names matched a drum (kick, snare, hat, tom, crash, clap...) in " + folder.getFileName());
+
+        sourceKit = source;
+        installSampleKit();
+        setKit ((int) Kit::samples);
+        return juce::Result::ok();
+    }
+
+    void clearSampleKit()
+    {
+        sourceKit = nullptr;
+        installSampleKit();
+        if (getKit() == (int) Kit::samples)
+            setKit ((int) Kit::studio);
+    }
+
+    juce::String getSampleKitName() const { return sourceKit != nullptr ? sourceKit->folder.getFileName() : juce::String(); }
+    bool hasSampleKit() const { return sourceKit != nullptr; }
+
+    // "KICK: file.wav" lines, for a tooltip; "(Studio voice)" where no sample was found.
+    juce::StringArray describeSampleKit() const
+    {
+        juce::StringArray lines;
+        const auto names = instrumentNames();
+        for (int i = 0; i < numInstruments; ++i)
+        {
+            juce::String files;
+            if (sourceKit != nullptr)
+                for (const auto& s : sourceKit->samples[(size_t) i])
+                    files << (files.isEmpty() ? "" : ", ") << s.name;
+            lines.add (names[i] + ": " + (files.isEmpty() ? juce::String ("(Studio voice)") : files));
+        }
+        return lines;
+    }
     int getKit() const { return kit.load(); }
     void setEnabled (bool on) { enabled.store (on); }
     bool isEnabled() const { return enabled.load(); }
@@ -187,6 +314,8 @@ public:
         tree.setProperty ("master", master.load(), nullptr);
         tree.setProperty ("room", room.load(), nullptr);
         tree.setProperty ("kit", kit.load(), nullptr);
+        if (sourceKit != nullptr)
+            tree.setProperty ("sampleFolder", sourceKit->folder.getFullPathName(), nullptr);
         juce::String pattern, levelList;
         for (const auto& c : cells)
             pattern << (int) c.load();
@@ -207,6 +336,22 @@ public:
         room.store ((float) tree.getProperty ("room", 0.35f));
         // States saved before kits existed get the improved Studio kit (the old sound stays selectable).
         setKit ((int) tree.getProperty ("kit", (int) Kit::studio));
+        // A sample kit whose folder is gone falls back to the Studio voices (and keeps nothing loaded).
+        const juce::File folder (tree.getProperty ("sampleFolder").toString());
+        if (tree.hasProperty ("sampleFolder") && folder.isDirectory())
+        {
+            if (folder != (sourceKit != nullptr ? sourceKit->folder : juce::File()))
+            {
+                const int savedKit = getKit();
+                loadSampleKit (folder);
+                setKit (savedKit);
+            }
+        }
+        else if (sourceKit != nullptr)
+        {
+            sourceKit = nullptr;
+            installSampleKit();
+        }
 
         const auto pattern = tree.getProperty ("pattern").toString();
         if (pattern.length() == (int) cells.size())
@@ -231,7 +376,93 @@ private:
         std::array<double, 6> metalPhases {};
         std::uint32_t noiseL = 1, noiseR = 2;
         std::array<Biquad, 2> filtersL, filtersR;
+        const juce::AudioBuffer<float>* sample = nullptr; // Samples kit: the layer playing
+        int sampleGeneration = 0;
     };
+
+    // Acoustic kit voicing: one voice model, tuned and damped differently per kit.
+    struct Voicing
+    {
+        double kickLow, kickHigh, kickDrop, kickDecay, beaterHz; float beater, kickDrive;
+        double snarePitch, snareDecay, wiresHz; float wires, crack;
+        double tomLow, tomHigh, tomDecayLow, tomDecayHigh;
+        double hatHighPass, hatLowPass, closedDecay, openDecay;
+        double crashHighPass, crashLowPass, crashDecay;
+    };
+
+    static const Voicing& voicingFor (int k)
+    {
+        static const Voicing studio  { 50, 125, 0.045, 0.17, 3200, 0.6f, 1.6f, 190, 0.13, 4500, 0.95f, 0.5f,
+                                       98, 150, 0.26, 0.20, 5500, 13000, 0.045, 0.42, 2500, 11000, 1.9 };
+        // Rock: bigger, open and ringing; lower toms, longer snare and cymbals.
+        static const Voicing rock    { 52, 115, 0.055, 0.24, 2600, 0.45f, 1.4f, 182, 0.19, 4000, 1.05f, 0.45f,
+                                       86, 132, 0.36, 0.29, 5000, 12500, 0.05, 0.5, 2300, 11500, 2.5 };
+        // Metal: tight, clicky kick that cuts through fast double bass, high cracking snare, short toms.
+        static const Voicing metal   { 58, 150, 0.028, 0.11, 4800, 1.25f, 2.2f, 228, 0.10, 5200, 0.8f, 0.95f,
+                                       108, 168, 0.18, 0.15, 6500, 14000, 0.035, 0.36, 2800, 12500, 1.6 };
+        // Vintage: deadened '60s-'70s kit: soft beater, low fat snare, dark cymbals.
+        static const Voicing vintage { 47, 100, 0.05, 0.14, 1900, 0.3f, 1.2f, 172, 0.12, 3400, 0.7f, 0.3f,
+                                       92, 136, 0.22, 0.18, 4500, 9000, 0.05, 0.4, 2000, 8000, 1.5 };
+        switch ((Kit) k)
+        {
+            case Kit::rock:    return rock;
+            case Kit::metal:   return metal;
+            case Kit::vintage: return vintage;
+            default:           return studio; // also stands in for missing samples
+        }
+    }
+
+    struct SourceSample { juce::String name; double rate = 48000.0; float loudness = 0.0f; juce::AudioBuffer<float> audio; };
+    struct SourceKit { juce::File folder; std::array<std::vector<SourceSample>, numInstruments> samples; };
+    // Per instrument: [normal, accent] at the engine rate; empty when the instrument has no sample.
+    struct EngineKit { std::array<std::array<juce::AudioBuffer<float>, 2>, numInstruments> layers; std::array<bool, numInstruments> twoLayers {}; };
+
+    // Builds the engine-rate kit from the source (outside the audio thread) and swaps it in.
+    void installSampleKit()
+    {
+        std::unique_ptr<EngineKit> built;
+        if (sourceKit != nullptr)
+        {
+            built = std::make_unique<EngineKit>();
+            for (int i = 0; i < numInstruments; ++i)
+            {
+                const auto& list = sourceKit->samples[(size_t) i];
+                if (list.empty())
+                    continue;
+                // Normal hits use the middle layer (or the only one), accents the loudest.
+                const SourceSample* layer[2] { &list[list.size() / 2 - (list.size() == 2 ? 1 : 0)], &list.back() };
+                built->twoLayers[(size_t) i] = list.size() > 1;
+                for (int l = 0; l < 2; ++l)
+                    built->layers[(size_t) i][(size_t) l] = resampled (*layer[l], sampleRate);
+            }
+        }
+        const juce::SpinLock::ScopedLockType lock (sampleLock);
+        engineKit = std::move (built); // the old kit is freed here, while the audio thread cannot use it
+        ++sampleGeneration;
+    }
+
+    static juce::AudioBuffer<float> resampled (const SourceSample& s, double rate)
+    {
+        const double ratio = s.rate / rate;
+        if (std::abs (ratio - 1.0) < 1.0e-6)
+            return s.audio;
+        // The interpolator delays its output by its base latency: render that much extra (from a
+        // zero-padded input) and drop it, so hits stay on the beat.
+        const int inLength = s.audio.getNumSamples();
+        const int latencyIn = (int) std::ceil (juce::WindowedSincInterpolator::getBaseLatency());
+        const int skip = (int) std::lround (juce::WindowedSincInterpolator::getBaseLatency() / ratio);
+        const int outLength = (int) std::ceil (inLength / ratio);
+        std::vector<float> padded ((size_t) (inLength + 2 * latencyIn + 4), 0.0f), rendered ((size_t) (outLength + skip));
+        juce::AudioBuffer<float> out (2, outLength);
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            std::copy (s.audio.getReadPointer (ch), s.audio.getReadPointer (ch) + inLength, padded.begin());
+            juce::WindowedSincInterpolator interpolator;
+            interpolator.process (ratio, padded.data(), rendered.data(), (int) rendered.size(), (int) padded.size(), 0);
+            out.copyFrom (ch, 0, rendered.data() + skip, outLength);
+        }
+        return out;
+    }
 
     static constexpr int chunkSize = 256;
 
@@ -245,6 +476,9 @@ private:
     // Renders into the private drum bus in fixed chunks, then mixes the bus into the output.
     void run (float* left, float* right, int numSamples, juce::int64 position, double bpm, bool withTriggers) noexcept
     {
+        // Sample voices only play while the kit cannot be swapped (a swap is rare: they pause a block).
+        const juce::SpinLock::ScopedTryLockType lock (sampleLock);
+        activeKit = lock.isLocked() ? engineKit.get() : nullptr;
         for (int done = 0; done < numSamples;)
         {
             const int n = juce::jmin (chunkSize, numSamples - done);
@@ -261,6 +495,7 @@ private:
             finishBus (left + done, right + done, n);
             done += n;
         }
+        activeKit = nullptr;
     }
 
     void sequence (int numSamples, juce::int64 position, double bpm) noexcept
@@ -293,7 +528,7 @@ private:
 
     void finishBus (float* left, float* right, int n) noexcept
     {
-        if (kit.load() == (int) Kit::studio)
+        if (kit.load() != (int) Kit::electronic)
         {
             // Room: a short, damped space fed by per-voice sends (snare and toms more than kick).
             roomReverb.processStereo (sendL.data(), sendR.data(), n);
@@ -341,6 +576,22 @@ private:
             for (auto& f : *bank)
                 f.reset();
 
+        v.sample = nullptr;
+        const int k = kit.load();
+        if (k == (int) Kit::samples && activeKit != nullptr)
+        {
+            const bool accent = velocity > 0.9f;
+            const auto& layer = activeKit->layers[(size_t) instrument][accent ? 1 : 0];
+            if (layer.getNumSamples() > 0)
+            {
+                v.sample = &layer;
+                v.sampleGeneration = sampleGeneration;
+                // With two layers the recordings carry the dynamics; one layer is scaled like the synth voices.
+                v.velocity = activeKit->twoLayers[(size_t) instrument] ? 1.0f : velocity;
+            }
+        }
+        const auto& voicing = voicingFor (k);
+
         const auto setBoth = [&v] (int index, const BiquadCoeffs& c)
         {
             v.filtersL[(size_t) index].set (c);
@@ -348,23 +599,23 @@ private:
         };
         const double sr = sampleRate;
 
-        if (kit.load() == (int) Kit::studio)
+        if (k != (int) Kit::electronic)
         {
             switch (instrument)
             {
-                case kick:   setBoth (0, ArrayCoeffs::makeBandPass (sr, 3200.0f, 0.9f)); break;
-                case snare:  setBoth (0, ArrayCoeffs::makeBandPass (sr, 4500.0f, 0.6f));
+                case kick:   setBoth (0, ArrayCoeffs::makeBandPass (sr, voicing.beaterHz, 0.9f)); break;
+                case snare:  setBoth (0, ArrayCoeffs::makeBandPass (sr, voicing.wiresHz, 0.6f));
                              setBoth (1, ArrayCoeffs::makeHighPass (sr, 1200.0f, 0.7f)); break;
                 case clap:   setBoth (0, ArrayCoeffs::makeBandPass (sr, 1300.0f, 1.1f));
                              setBoth (1, ArrayCoeffs::makeHighPass (sr, 500.0f, 0.7f)); break;
                 case closedHat:
                 case openHat:
-                             setBoth (0, ArrayCoeffs::makeHighPass (sr, 5500.0f, 0.7f));
-                             setBoth (1, ArrayCoeffs::makeLowPass (sr, (float) juce::jmin (13000.0, sr * 0.45), 0.7f)); break;
+                             setBoth (0, ArrayCoeffs::makeHighPass (sr, voicing.hatHighPass, 0.7f));
+                             setBoth (1, ArrayCoeffs::makeLowPass (sr, juce::jmin (voicing.hatLowPass, sr * 0.45), 0.7f)); break;
                 case lowTom:
                 case highTom: setBoth (0, ArrayCoeffs::makeBandPass (sr, 2000.0f, 1.0f)); break;
-                case crash:  setBoth (0, ArrayCoeffs::makeHighPass (sr, 2500.0f, 0.7f));
-                             setBoth (1, ArrayCoeffs::makeLowPass (sr, (float) juce::jmin (11000.0, sr * 0.45), 0.7f)); break;
+                case crash:  setBoth (0, ArrayCoeffs::makeHighPass (sr, voicing.crashHighPass, 0.7f));
+                             setBoth (1, ArrayCoeffs::makeLowPass (sr, juce::jmin (voicing.crashLowPass, sr * 0.45), 0.7f)); break;
                 default: break;
             }
         }
@@ -399,9 +650,10 @@ private:
     }
 
     //==============================================================================
-    // Studio kit: band-limited models of an acoustic kit.
+    // Acoustic kits: band-limited models of an acoustic kit, tuned per kit.
     Stereo renderStudio (int instrument, Voice& v, float& amp) noexcept
     {
+        const auto& kv = voicingFor (kit.load());
         const double sec = v.t / sampleRate;
         const auto env = [sec] (double tau) { return (float) std::exp (-sec / tau); };
         constexpr double twoPi = juce::MathConstants<double>::twoPi;
@@ -413,26 +665,27 @@ private:
             case kick:
             {
                 // Drum head: 125 Hz falling to 50 Hz, a second mode for punch, and the felt beater's click.
-                v.phase += (50.0 + 75.0 * std::exp (-sec / 0.045)) / sampleRate;
-                amp = env (0.17); // a damped kick: about 0.8 s to -40 dB
+                v.phase += (kv.kickLow + (kv.kickHigh - kv.kickLow) * std::exp (-sec / kv.kickDrop)) / sampleRate;
+                amp = env (kv.kickDecay); // Studio: a damped kick, about 0.8 s to -40 dB
                 const float body = (float) std::sin (twoPi * v.phase) * amp * attack;
                 const float punch = 0.25f * (float) std::sin (2.0 * twoPi * v.phase) * env (0.06);
-                const float beater = 0.6f * vel * v.filtersL[0] (nextNoise (v.noiseL)) * env (0.004);
-                const float x = std::tanh (1.6f * (body + punch + beater)) / std::tanh (1.6f);
+                const float beater = kv.beater * vel * v.filtersL[0] (nextNoise (v.noiseL)) * env (0.004);
+                const float x = std::tanh (kv.kickDrive * (body + punch + beater)) / std::tanh (kv.kickDrive);
                 return { x, x };
             }
             case snare:
             {
                 // Shell modes (slight pitch drop) + snare wires (band noise) + stick crack.
-                v.phase += 190.0 * (1.0 + 0.08 * std::exp (-sec / 0.02)) / sampleRate;
+                const double tune = kv.snarePitch / 190.0; // shell modes keep their ratios
+                v.phase += kv.snarePitch * (1.0 + 0.08 * std::exp (-sec / 0.02)) / sampleRate;
                 const float shell = (float) std::sin (twoPi * v.phase) * env (0.11)
-                                  + 0.45f * (float) std::sin (twoPi * 330.0 * sec) * env (0.07)
-                                  + 0.25f * (float) std::sin (twoPi * 470.0 * sec) * env (0.04);
+                                  + 0.45f * (float) std::sin (twoPi * 330.0 * tune * sec) * env (0.07)
+                                  + 0.25f * (float) std::sin (twoPi * 470.0 * tune * sec) * env (0.04);
                 const float n = nextNoise (v.noiseL);
-                amp = env (0.13);
-                const float wires = 0.95f * v.filtersL[0] (n) * amp;
+                amp = env (kv.snareDecay);
+                const float wires = kv.wires * v.filtersL[0] (n) * amp;
                 const float mid = 0.4f * v.filtersL[1] (n) * env (0.06);
-                const float crack = 0.5f * vel * n * env (0.006);
+                const float crack = kv.crack * vel * n * env (0.006);
                 const float x = std::tanh (1.2f * (0.6f * shell * attack + wires + mid + crack));
                 return { x, x };
             }
@@ -460,7 +713,7 @@ private:
                         metal += (float) std::sin (twoPi * partials[i] * sec + (double) i);
                 metal /= (float) partials.size();
 
-                amp = env (instrument == closedHat ? 0.045 : 0.42) * (1.0f - (float) std::exp (-sec / 0.0003));
+                amp = env (instrument == closedHat ? kv.closedDecay : kv.openDecay) * (1.0f - (float) std::exp (-sec / 0.0003));
                 const float l = v.filtersL[1] (v.filtersL[0] (0.45f * metal + 0.75f * nextNoise (v.noiseL))) * amp;
                 if (instrument == closedHat)
                     return { l, l };
@@ -470,9 +723,9 @@ private:
             case lowTom:
             case highTom:
             {
-                const double base = instrument == lowTom ? 98.0 : 150.0;
+                const double base = instrument == lowTom ? kv.tomLow : kv.tomHigh;
                 v.phase += base * (1.0 + 0.35 * std::exp (-sec / 0.06)) / sampleRate;
-                amp = env (instrument == lowTom ? 0.26 : 0.2);
+                amp = env (instrument == lowTom ? kv.tomDecayLow : kv.tomDecayHigh);
                 const float body = (float) std::sin (twoPi * v.phase) * amp * attack;
                 const float mode2 = 0.3f * (float) std::sin (twoPi * v.phase * 1.52) * env (0.09);
                 const float stick = 0.5f * vel * v.filtersL[0] (nextNoise (v.noiseL)) * env (0.006);
@@ -490,7 +743,7 @@ private:
                 metal /= (float) partials.size();
 
                 // Bright splash on the hit, then the long wash.
-                amp = (0.5f * env (0.08) + 0.5f * env (1.9)) * (1.0f - (float) std::exp (-sec / 0.0015));
+                amp = (0.5f * env (0.08) + 0.5f * env (kv.crashDecay)) * (1.0f - (float) std::exp (-sec / 0.0015));
                 const float l = v.filtersL[1] (v.filtersL[0] (0.35f * metal + 0.9f * nextNoise (v.noiseL))) * amp;
                 const float r = v.filtersR[1] (v.filtersR[0] (0.35f * metal + 0.9f * nextNoise (v.noiseR))) * amp;
                 return { l, r };
@@ -580,7 +833,7 @@ private:
         constexpr std::array<float, numInstruments> pan { 0.0f, 0.0f, 0.1f, 0.3f, 0.3f, -0.4f, 0.4f, -0.25f };
         // Room sends (Studio kit): snare, clap and toms live in the room; kick and hats stay close.
         constexpr std::array<float, numInstruments> sends { 0.06f, 0.3f, 0.35f, 0.08f, 0.12f, 0.22f, 0.22f, 0.15f };
-        const bool studio = kit.load() == (int) Kit::studio;
+        const bool studio = kit.load() != (int) Kit::electronic; // acoustic kits and samples
         const float m = master.load();
 
         for (int inst = 0; inst < numInstruments; ++inst)
@@ -599,7 +852,19 @@ private:
             {
                 float amp = 0.0f;
                 Stereo s;
-                if (studio)
+                if (v.sample != nullptr)
+                {
+                    // A swapped-out kit silences its voices instead of reading freed memory.
+                    const auto pos = (int) v.t;
+                    if (activeKit == nullptr || v.sampleGeneration != sampleGeneration || pos >= v.sample->getNumSamples())
+                    {
+                        v.active = false;
+                        break;
+                    }
+                    s = { v.sample->getSample (0, pos), v.sample->getSample (1, pos) };
+                    amp = 1.0f; // plays to its end
+                }
+                else if (studio)
                 {
                     s = renderStudio (inst, v, amp);
                 }
@@ -635,6 +900,12 @@ private:
     std::array<std::atomic<float>, numInstruments> levels {};
     std::atomic<float> swing { 0.0f }, master { 0.5f }, room { 0.35f }; // master 0.5 keeps the busiest preset below full scale
     std::atomic<int> kit { (int) Kit::studio };
+
+    std::shared_ptr<const SourceKit> sourceKit;   // message thread (shared with offline copies)
+    std::unique_ptr<EngineKit> engineKit;         // swapped under sampleLock
+    const EngineKit* activeKit = nullptr;         // audio thread, valid while run() holds the lock
+    int sampleGeneration = 0;                     // changes with every swap (under the lock)
+    juce::SpinLock sampleLock;
     std::atomic<bool> enabled { false };
 };
 } // namespace poman

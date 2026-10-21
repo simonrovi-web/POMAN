@@ -6,6 +6,7 @@ namespace
 const juce::Identifier irPathProperty { "impulseResponsePath" };
 const juce::Identifier irPathBProperty { "impulseResponsePathB" };
 const juce::Identifier namPathProperty { "namModelPath" };
+const juce::Identifier looperSyncProperty { "looperSync" }; // session only, like the drums
 
 const juce::Identifier& slotProperty (PomanProcessor::FileSlot slot)
 {
@@ -152,6 +153,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout PomanProcessor::createParame
     addSwitch (layout, "revOn", "Reverb On", false);
     addFloat (layout, "revSize", "Reverb Size", { 0.0f, 1.0f, 0.001f }, 0.5f);
     addFloat (layout, "revMix", "Reverb Mix", { 0.0f, 1.0f, 0.001f }, 0.2f);
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "revType", 1 }, "Reverb Type", poman::Ambience::typeNames(), 1));
+    addFloat (layout, "revTone", "Reverb Tone", { 0.0f, 1.0f, 0.001f }, 0.5f);
+
+    // WAH / VOL: map an expression pedal to "Wah Position" or "Volume Pedal" with MIDI learn.
+    addSwitch (layout, "wahOn", "Wah On", false);
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "wahMode", 1 }, "Wah Mode", poman::Wah::modeNames(), 0));
+    addFloat (layout, "wahPos", "Wah Position", { 0.0f, 1.0f, 0.001f }, 0.5f);
+    addFloat (layout, "wahReso", "Wah Resonance", { 0.0f, 1.0f, 0.001f }, 0.5f);
+    addSwitch (layout, "wahAuto", "Wah Auto-Engage", true);
+    addFloat (layout, "volPedal", "Volume Pedal", { 0.0f, 1.0f, 0.001f }, 1.0f);
 
     return layout;
 }
@@ -162,7 +173,7 @@ PomanProcessor::PomanProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PomanState", createParameterLayout())
 {
-    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "compOn", "compSustain", "compAttack", "compLevel", "compBlend", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "cabMix", "cabLowCut", "cabHighCut", "eqOn", "eq31", "eq63", "eq125", "eq250", "eq500", "eq1k", "eq2k", "eq4k", "eq8k", "eq16k", "eqLowCut", "eqHighCut", "eqLevel", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "modOn", "modType", "modRate", "modDepth", "modMix", "modFeedback", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "dlySync", "revOn", "revSize", "revMix" };
+    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "compOn", "compSustain", "compAttack", "compLevel", "compBlend", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "cabMix", "cabLowCut", "cabHighCut", "eqOn", "eq31", "eq63", "eq125", "eq250", "eq500", "eq1k", "eq2k", "eq4k", "eq8k", "eq16k", "eqLowCut", "eqHighCut", "eqLevel", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "modOn", "modType", "modRate", "modDepth", "modMix", "modFeedback", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "dlySync", "revOn", "revSize", "revMix", "revType", "revTone", "wahOn", "wahMode", "wahPos", "wahReso", "wahAuto", "volPedal" };
     static_assert (std::size (ids) == (size_t) Param::count);
 
     for (size_t i = 0; i < rawParameters.size(); ++i)
@@ -198,12 +209,16 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     gate.prepare (sampleRate);
     compressor.prepare (sampleRate);
     octaver.prepare (sampleRate);
+    wah.prepare (sampleRate);
+    volumePedal.reset (sampleRate, 0.02);
+    volumePedal.setCurrentAndTargetValue (volumeCurve (param (Param::volPedal)));
     overdrive.prepare (sampleRate, maxChunkSize);
     amp.prepare (sampleRate, maxChunkSize);
     namAmp.prepare (sampleRate, maxChunkSize);
     cab.prepare (sampleRate, maxChunkSize);
     delay.prepare (sampleRate, maxChunkSize);
     reverb.prepare (sampleRate, maxChunkSize);
+    delayTrail = reverbTrail = 0;
     graphicEq.prepare (sampleRate);
     harmonizer.prepare (sampleRate);
     modulation.prepare (sampleRate, maxChunkSize);
@@ -228,6 +243,9 @@ void PomanProcessor::updateParameters()
 
     gate.setThreshold (param (Param::gateThreshold));
     octaver.setMix (param (Param::octSub), param (Param::octUp), param (Param::octDry));
+    wah.setParams (param (Param::wahMode) > 0.5f ? poman::Wah::Mode::autoWah : poman::Wah::Mode::pedal,
+                   param (Param::wahPos), param (Param::wahReso));
+    volumePedal.setTargetValue (volumeCurve (param (Param::volPedal)));
     overdrive.setParams ((poman::Overdrive::Type) juce::jlimit (0, (int) poman::Overdrive::Type::count - 1, (int) param (Param::odType)),
                          param (Param::odDrive), param (Param::odTone), param (Param::odLevel));
 
@@ -265,7 +283,9 @@ void PomanProcessor::updateParameters()
     compressor.setParams (param (Param::compSustain), param (Param::compAttack), param (Param::compLevel), param (Param::compBlend));
     delay.setParams (poman::syncedDelayMs (getCurrentBpm(), juce::roundToInt (param (Param::dlySync)), param (Param::dlyTime)),
                      param (Param::dlyFeedback), param (Param::dlyMix));
-    reverb.setParams (param (Param::revSize), param (Param::revMix));
+    reverb.setParams (param (Param::revSize), param (Param::revMix),
+                      (poman::Ambience::Type) juce::jlimit (0, (int) poman::Ambience::Type::count - 1, juce::roundToInt (param (Param::revType))),
+                      param (Param::revTone));
 }
 
 poman::GraphicEQ::Settings PomanProcessor::getEqSettings() const
@@ -299,12 +319,20 @@ void PomanProcessor::handleMidi()
             }
             if (auto* p = apvts.getParameter (target))
                 p->setValueNotifyingHost (dynamic_cast<juce::AudioParameterBool*> (p) != nullptr ? (value >= 0.5f ? 1.0f : 0.0f) : value);
+
+            if (target == "wahPos"
+                && wahSwitch.pedalMoved (value, enabled (Param::wahOn), enabled (Param::wahAuto), juce::Time::getMillisecondCounterHiRes())
+                       == poman::PedalSwitch::Change::switchOn)
+                apvts.getParameter ("wahOn")->setValueNotifyingHost (1.0f);
         },
         [this] (int program)
         {
             if (program < presetManager->getPresetNames().size()) // PC n = preset n in the list (factory first)
                 presetManager->loadPreset (program);
         });
+    if (wahSwitch.tick (param (Param::wahPos), enabled (Param::wahOn), juce::Time::getMillisecondCounterHiRes())
+        == poman::PedalSwitch::Change::switchOff)
+        apvts.getParameter ("wahOn")->setValueNotifyingHost (0.0f);
 }
 
 void PomanProcessor::performAction (const juce::String& name)
@@ -386,10 +414,14 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
     if (harmonizerOn)
         harmonizer.track (mono, numSamples);
 
-    if (enabled (Param::gateOn))
-        gate.process (mono, numSamples);
+    // The gate listens to the clean guitar here and cuts after the amp (below), amp noise included.
+    const bool gateOn = enabled (Param::gateOn);
+    if (gateOn)
+        gate.detect (mono, numSamples);
     if (enabled (Param::compOn))
         compressor.process (mono, numSamples);
+    if (enabled (Param::wahOn))
+        wah.process (mono, numSamples);
     if (enabled (Param::octOn))
         octaver.process (mono, numSamples);
     if (enabled (Param::odOn))
@@ -402,12 +434,18 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
     else
         amp.process (monoBlock);
     pathDelay.process (mono, numSamples, useNam ? namPathPad.load() : ampPathPad.load());
+    if (gateOn)
+        gate.apply (mono, numSamples);
 
     if (enabled (Param::cabOn))
         cab.process (monoBlock);
 
     if (enabled (Param::eqOn))
         graphicEq.process (mono, numSamples);
+
+    // Volume pedal before the time effects, so delay and reverb trails ring on when it closes.
+    for (int i = 0; i < numSamples; ++i)
+        mono[i] *= volumePedal.getNextValue();
 
     auto* left = buffer.getWritePointer (0, startSample);
     auto* right = buffer.getWritePointer (1, startSample);
@@ -424,14 +462,26 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
     if (enabled (Param::modOn))
         modulation.process (left, right, numSamples);
 
-    if (enabled (Param::dlyOn))
-        delay.process (left, right, numSamples);
+    // Delay and reverb trails: switching them off (or loading a preset without them) stops feeding
+    // them but lets what is already ringing fade out, for gapless preset changes.
+    const auto trail = [this, numSamples] (bool on, int& remaining)
+    {
+        if (on)
+            remaining = (int) (getSampleRate() * trailSeconds);
+        else
+            remaining = juce::jmax (0, remaining - numSamples);
+        return on || remaining > 0;
+    };
+    const bool delayOn = enabled (Param::dlyOn);
+    if (trail (delayOn, delayTrail))
+        delay.process (left, right, numSamples, delayOn);
 
-    if (enabled (Param::revOn))
+    const bool reverbOn = enabled (Param::revOn);
+    if (trail (reverbOn, reverbTrail))
     {
         auto stereoBlock = juce::dsp::AudioBlock<float> (buffer).getSubsetChannelBlock (0, 2)
                                .getSubBlock ((size_t) startSample, (size_t) numSamples);
-        reverb.process (stereoBlock);
+        reverb.process (stereoBlock, reverbOn);
     }
 
     for (int i = 0; i < numSamples; ++i)
@@ -442,7 +492,9 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
     }
 
     // The looper sits before the recorder, so a looped performance can be recorded in STUDIO.
-    looper.process (left, right, numSamples);
+    // Synced loops follow the studio/drums transport (before the recorder advances it this block).
+    looper.process (left, right, numSamples,
+                    { recorder->getState() != poman::MultitrackRecorder::State::stopped, recorder->getPlayhead(), getCurrentBpm() });
 
     // Records the finished rig sound, then layers the other tracks and the click on top.
     recorder->process (left, right, numSamples);
@@ -521,6 +573,11 @@ juce::String PomanProcessor::getFileName (FileSlot slot) const
     return path.isEmpty() ? juce::String() : resolveStoredPath (path).getFileNameWithoutExtension();
 }
 
+juce::File PomanProcessor::getFile (FileSlot slot) const
+{
+    return resolveStoredPath (apvts.state.getProperty (slotProperty (slot)).toString());
+}
+
 bool PomanProcessor::isFileSlotLoaded (FileSlot slot) const
 {
     return slot == FileSlot::namModel ? namAmp.isLoaded() : cab.hasImpulseResponse (slot == FileSlot::irA ? 0 : 1);
@@ -570,6 +627,7 @@ void PomanProcessor::updateLatency()
     ampPathPad.store (pathLatency - ampLatency);
     namPathPad.store (pathLatency - namLatency);
     setLatencySamples (pathLatency + overdrive.getLatencySamples()); // the drive oversampler is always in the path
+    gate.setPathLatency (getLatencySamples()); // detection point to the gate's cut, after the amp
 }
 
 void PomanProcessor::getStateInformation (juce::MemoryBlock& destData)
@@ -579,6 +637,7 @@ void PomanProcessor::getStateInformation (juce::MemoryBlock& destData)
     auto state = apvts.copyState();
     state.appendChild (drums.toValueTree(), nullptr);
     state.appendChild (midiRouter.toValueTree(), nullptr); // MIDI map is global, not part of presets
+    state.setProperty (looperSyncProperty, looper.isSynced(), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -612,6 +671,11 @@ void PomanProcessor::setStateInformation (const void* data, int sizeInBytes)
     {
         drums.fromValueTree (drumState);
         state.removeChild (drumState, nullptr);
+    }
+    if (state.hasProperty (looperSyncProperty))
+    {
+        looper.setSync ((bool) state.getProperty (looperSyncProperty));
+        state.removeProperty (looperSyncProperty, nullptr);
     }
     const auto midiState = state.getChildWithName ("MidiMap");
     if (midiState.isValid())

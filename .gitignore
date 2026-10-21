@@ -12,3 +12,4 @@ portable/*/Presets/
 portable/*.backup-*
 portable/*/Recordings/
 previews/
+portable/*/*.language

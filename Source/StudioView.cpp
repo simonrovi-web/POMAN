@@ -1,4 +1,7 @@
 #include "StudioView.h"
+#include "Localisation.h"
+
+using poman::i18n::tr;
 #include "Palette.h"
 
 namespace
@@ -82,14 +85,14 @@ void StudioView::Lane::paint (juce::Graphics& g)
 
         g.setColour (recordRed);
         g.setFont (juce::FontOptions (12.0f, juce::Font::bold));
-        g.drawText (recorder.isCountingIn() ? "COUNT-IN" : "RECORDING", juce::Rectangle<float> (x0 + 6.0f, 4.0f, 100.0f, 16.0f),
+        g.drawText (tr (recorder.isCountingIn() ? "COUNT-IN" : "RECORDING"), juce::Rectangle<float> (x0 + 6.0f, 4.0f, 100.0f, 16.0f),
                     juce::Justification::centredLeft);
     }
     else if (! info.hasAudio)
     {
         g.setColour (palette::dimText.withAlpha (0.6f));
         g.setFont (juce::FontOptions (12.0f));
-        g.drawText ("empty", bounds.reduced (10.0f, 0.0f), juce::Justification::centredLeft);
+        g.drawText (tr ("empty"), bounds.reduced (10.0f, 0.0f), juce::Justification::centredLeft);
     }
 
     const auto playheadX = (float) (recorder.getPlayhead() / samplesPerPixel);
@@ -132,10 +135,10 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
         if (wasRecording)
         {
             if (const auto dropped = recorder.getDroppedSamples(); dropped > 0)
-                setStatus ("Warning: the disk was too slow, " + juce::String (1000.0 * (double) dropped / recorder.getSampleRate(), 0)
-                               + " ms of the take are missing. Record to a faster drive.", true);
+                setStatus (tr ("Warning: the disk was too slow, ") + juce::String (1000.0 * (double) dropped / recorder.getSampleRate(), 0)
+                               + tr (" ms of the take are missing. Record to a faster drive."), true);
             else
-                setStatus ("Take saved in " + recorder.getSessionFolder().getFileName());
+                setStatus (tr ("Take saved in ") + recorder.getSessionFolder().getFileName());
         }
         refreshControls();
     };
@@ -145,7 +148,7 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
         if (result.failed())
             setStatus (result.getErrorMessage(), true);
         else
-            setStatus ("Recording track " + juce::String (recorder.getRecordingTrack() + 1) + "...");
+            setStatus (tr ("Recording track ") + juce::String (recorder.getRecordingTrack() + 1) + "...");
         refreshControls();
     };
     clickButton.onClick = [this] { recorder.setMetronome (! recorder.isMetronomeOn()); recorder.saveSession(); refreshControls(); };
@@ -153,7 +156,7 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
 
     openSessionButton.onClick = [this]
     {
-        sessionChooser = std::make_unique<juce::FileChooser> ("Open a POMAN session folder", recorder.getRecordingsRoot(), "*");
+        sessionChooser = std::make_unique<juce::FileChooser> (tr ("Open a POMAN session folder"), recorder.getRecordingsRoot(), "*");
         sessionChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
                                      [this] (const juce::FileChooser& chooser)
                                      {
@@ -161,7 +164,7 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
                                          if (folder == juce::File())
                                              return;
                                          const auto result = recorder.openSession (folder);
-                                         setStatus (result.wasOk() ? "Opened " + folder.getFileName() : result.getErrorMessage(), result.failed());
+                                         setStatus (result.wasOk() ? tr ("Opened ") + folder.getFileName() : result.getErrorMessage(), result.failed());
                                          bpmSlider.setValue (recorder.getBpm(), juce::dontSendNotification);
                                          for (int t = 0; t < poman::MultitrackRecorder::numTracks; ++t)
                                              tracks[(size_t) t].volume.setValue (recorder.getVolume (t), juce::dontSendNotification);
@@ -172,15 +175,15 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
 
     newSessionButton.onClick = [this]
     {
-        auto options = juce::MessageBoxOptions::makeOptionsOkCancel (juce::MessageBoxIconType::QuestionIcon, "New session",
-                                                                      "Clear all tracks and start a new session?\nRecorded WAV files stay on disk.",
-                                                                      "New session", "Cancel", this);
+        auto options = juce::MessageBoxOptions::makeOptionsOkCancel (juce::MessageBoxIconType::QuestionIcon, tr ("New session"),
+                                                                      tr ("Clear all tracks and start a new session?\nRecorded WAV files stay on disk."),
+                                                                      tr ("New session"), tr ("Cancel"), this);
         juce::NativeMessageBox::showAsync (options, [safe = juce::Component::SafePointer<StudioView> (this)] (int result)
         {
             if (safe != nullptr && result == 1)
             {
                 safe->recorder.newSession();
-                safe->setStatus ("New session: " + safe->recorder.getSessionFolder().getFileName());
+                safe->setStatus (tr ("New session: ") + safe->recorder.getSessionFolder().getFileName());
                 safe->refreshControls();
             }
         });
@@ -190,7 +193,7 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
     {
         juce::File written;
         const auto result = recorder.exportMix (written, makeExportLayer ? makeExportLayer() : poman::MultitrackRecorder::ExportLayer {});
-        setStatus (result.wasOk() ? "Exported " + written.getFullPathName() : result.getErrorMessage(), result.failed());
+        setStatus (result.wasOk() ? tr ("Exported ") + written.getFullPathName() : result.getErrorMessage(), result.failed());
     };
 
     folderButton.onClick = [this]
@@ -229,7 +232,7 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
         auto& tc = tracks[(size_t) t];
         const auto colour = trackColours[(size_t) t];
 
-        tc.name.setText ("TRACK " + juce::String (t + 1), juce::dontSendNotification);
+        tc.name.setText (tr ("TRACK ") + juce::String (t + 1), juce::dontSendNotification);
         tc.name.setFont (juce::FontOptions (13.0f, juce::Font::bold));
         tc.name.setColour (juce::Label::textColourId, colour);
         addAndMakeVisible (tc.name);
@@ -327,7 +330,7 @@ void StudioView::timerCallback()
     {
         const double samplesPerBeat = recorder.getSampleRate() * 60.0 / recorder.getBpm();
         const auto beatsLeft = (int) std::ceil ((double) (recorder.getRecordingStart() - recorder.getPlayhead()) / samplesPerBeat);
-        timeLabel.setText ("COUNT-IN  " + juce::String (beatsLeft), juce::dontSendNotification);
+        timeLabel.setText (tr ("COUNT-IN  ") + juce::String (beatsLeft), juce::dontSendNotification);
         timeLabel.setColour (juce::Label::textColourId, recordRed);
     }
     else

@@ -1,4 +1,7 @@
 #include "PluginEditor.h"
+#include "Localisation.h"
+
+using poman::i18n::tr;
 #include "Palette.h"
 
 #include <numeric>
@@ -160,8 +163,21 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     compGrLabel.setColour (juce::Label::textColourId, palette::kelp);
     addAndMakeVisible (compGrLabel);
 
-    octaveSection = &addSection ("SUBMERGE // OCTAVE", palette::pressure, "octOn",
+    octaveSection = &addSection ("OCTAVE", palette::pressure, "octOn",
                 { &addKnob ("octSub", "SUB"), &addKnob ("octUp", "UP"), &addKnob ("octDry", "DRY") });
+    wahSection = &addSection ("WAH", palette::sunlight, "wahOn",
+                              { &addKnob ("wahPos", "POSITION"), &addKnob ("wahReso", "RESO"), &addKnob ("volPedal", "VOLUME") });
+    wahModeBox.addItemList (poman::Wah::modeNames(), 1);
+    wahModeBox.setColour (juce::ComboBox::outlineColourId, palette::sunlight.withAlpha (0.6f));
+    wahModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, "wahMode", wahModeBox);
+    addAndMakeVisible (wahModeBox);
+    wahAutoButton.setClickingTogglesState (true);
+    wahAutoButton.setColour (juce::TextButton::buttonOnColourId, palette::sunlight.withAlpha (0.7f));
+    wahAutoButton.setTooltip ("Right-click POSITION to MIDI-learn an expression pedal. With PEDAL ON, moving the pedal "
+                              "switches the wah on, and resting at the heel for half a second switches it off");
+    wahAutoAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (processor.apvts, "wahAuto", wahAutoButton);
+    addAndMakeVisible (wahAutoButton);
+
     driveSection = &addSection ("DRIVE", palette::ember, "odOn",
                 { &addKnob ("odDrive", "DRIVE"), &addKnob ("odTone", "TONE"), &addKnob ("odLevel", "LEVEL") });
 
@@ -224,8 +240,8 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     calButton.onClick = [this] { startCalibration(); };
     addAndMakeVisible (calButton);
     inputMeter.setTargetZone (-12.0f, -6.0f);
-    reverbSection = &addSection ("TRENCH // REVERB", palette::pressure, "revOn",
-                { &addKnob ("revSize", "SIZE"), &addKnob ("revMix", "MIX") });
+    reverbSection = &addSection ("REVERB", palette::pressure, "revOn",
+                { &addKnob ("revSize", "SIZE"), &addKnob ("revTone", "TONE"), &addKnob ("revMix", "MIX") });
 
     harmIntervalKnobs = { &addKnob ("harmV1Steps", "VOICE 1"), &addKnob ("harmV2Steps", "VOICE 2") };
     harmonizerSection = &addSection ("HARMONIZER", palette::aurora, "harmOn",
@@ -239,6 +255,11 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     modTypeBox.setColour (juce::ComboBox::outlineColourId, palette::coral.withAlpha (0.6f));
     modTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, "modType", modTypeBox);
     addAndMakeVisible (modTypeBox);
+
+    revTypeBox.addItemList (poman::Ambience::typeNames(), 1);
+    revTypeBox.setColour (juce::ComboBox::outlineColourId, palette::pressure.withAlpha (0.6f));
+    revTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, "revType", revTypeBox);
+    addAndMakeVisible (revTypeBox);
 
     // Interval knobs read as musical intervals; their meaning follows the mode (degrees vs semitones).
     for (auto* k : harmIntervalKnobs)
@@ -277,7 +298,7 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     driveTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, "odType", driveTypeBox);
     addAndMakeVisible (driveTypeBox);
 
-    for (auto* b : { &irAButton, &irBButton, &builtInCabButton, &loadNamButton })
+    for (auto* b : { &irPrevButton, &irNextButton, &irAButton, &irBButton, &builtInCabButton, &loadNamButton })
     {
         b->setColour (juce::TextButton::buttonOnColourId, palette::biolume);
         addAndMakeVisible (*b);
@@ -286,6 +307,10 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     irBButton.setTooltip ("Load a second IR into slot B (blended with A/B MIX, phase-aligned automatically)");
     builtInCabButton.setTooltip ("Remove both IRs and use the built-in 4x12 model");
     loadNamButton.setTooltip ("Load a Neural Amp Modeler capture (.nam) and select NAM Capture");
+    irPrevButton.setTooltip ("Previous IR in the folder (slot A)");
+    irNextButton.setTooltip ("Next IR in the folder (slot A)");
+    irPrevButton.onClick = [this] { stepIr (-1); };
+    irNextButton.onClick = [this] { stepIr (1); };
     irAButton.onClick = [this] { chooseFile (PomanProcessor::FileSlot::irA); };
     irBButton.onClick = [this] { chooseFile (PomanProcessor::FileSlot::irB); };
     loadNamButton.onClick = [this] { chooseFile (PomanProcessor::FileSlot::namModel); };
@@ -348,8 +373,12 @@ PomanEditor::PomanEditor (PomanProcessor& p)
                                                [this] (const juce::String& target, juce::Component& anchor) { showMidiMenu (target, anchor); },
                                                [this] (const juce::String& target) { return processor.getMidiRouter().getCcFor (target); });
         addChildComponent (*loopView);
+        liveView = std::make_unique<LiveView> (processor,
+                                               [this] (const juce::String& target, juce::Component& anchor) { showMidiMenu (target, anchor); },
+                                               [this] { return lastTunerReading; });
+        addChildComponent (*liveView);
 
-        for (auto* b : { &rigPageButton, &studioPageButton, &drumsPageButton, &loopPageButton })
+        for (auto* b : { &rigPageButton, &studioPageButton, &drumsPageButton, &loopPageButton, &livePageButton })
         {
             b->setRadioGroupId (1001);
             b->setClickingTogglesState (true);
@@ -361,7 +390,18 @@ PomanEditor::PomanEditor (PomanProcessor& p)
         studioPageButton.onClick = [this] { showPage (Page::studio); };
         drumsPageButton.onClick = [this] { showPage (Page::drums); };
         loopPageButton.onClick = [this] { showPage (Page::loop); };
+        livePageButton.onClick = [this] { showPage (Page::live); };
     }
+
+    languageButton.setTooltip ("Language / Idioma");
+    languageButton.onClick = [this]
+    {
+        using poman::i18n::Language;
+        poman::i18n::setLanguage (poman::i18n::language() == Language::spanish ? Language::english : Language::spanish);
+        applyLanguage();
+    };
+    addAndMakeVisible (languageButton);
+    applyLanguage();
 
     setResizable (true, true);
     setResizeLimits (760, 687, 1600, 1446);
@@ -383,11 +423,11 @@ void PomanEditor::refreshPresetBox()
     const auto names = presets.getPresetNames();
 
     presetBox.clear (juce::dontSendNotification);
-    presetBox.addSectionHeading ("FACTORY");
+    presetBox.addSectionHeading (tr ("FACTORY"));
     for (int i = 0; i < names.size(); ++i)
     {
         if (i == presets.getNumFactoryPresets())
-            presetBox.addSectionHeading ("USER");
+            presetBox.addSectionHeading (tr ("USER"));
         presetBox.addItem (names[i], i + 1);
     }
 
@@ -401,22 +441,33 @@ void PomanEditor::refreshPresetBox()
 
 void PomanEditor::showSavePresetDialog()
 {
-    saveDialog = std::make_unique<juce::AlertWindow> ("Save preset", "Name for the new preset:", juce::MessageBoxIconType::NoIcon, this);
+    saveDialog = std::make_unique<juce::AlertWindow> (tr ("Save preset"), tr ("Name for the new preset:"), juce::MessageBoxIconType::NoIcon, this);
     saveDialog->addTextEditor ("name", processor.getPresetManager().getCurrentName());
-    saveDialog->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    saveDialog->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    saveDialog->addButton (tr ("Save"), 1, juce::KeyPress (juce::KeyPress::returnKey));
+    saveDialog->addButton (tr ("Cancel"), 0, juce::KeyPress (juce::KeyPress::escapeKey));
     saveDialog->enterModalState (true, juce::ModalCallbackFunction::create ([this] (int result)
     {
         if (result == 1 && saveDialog != nullptr)
         {
             const auto name = saveDialog->getTextEditorContents ("name");
             if (! processor.getPresetManager().saveUserPreset (name))
-                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Save preset",
-                                                        "Could not save to " + processor.getPresetManager().getUserFolder().getFullPathName());
+                juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, tr ("Save preset"),
+                                                        tr ("Could not save to ") + processor.getPresetManager().getUserFolder().getFullPathName());
             refreshPresetBox();
         }
         saveDialog = nullptr;
     }), false);
+}
+
+void PomanEditor::applyLanguage()
+{
+    languageButton.setButtonText (poman::i18n::language() == poman::i18n::Language::spanish ? "ES" : "EN");
+    poman::i18n::retranslate (*this);
+    refreshPresetBox();
+    refreshMidiLabels();
+    repaint();
+    for (auto* child : getChildren())
+        child->repaint();
 }
 
 void PomanEditor::showPage (Page page)
@@ -427,12 +478,15 @@ void PomanEditor::showPage (Page page)
     studioView->setVisible (page == Page::studio);
     drumView->setVisible (page == Page::drums);
     loopView->setVisible (page == Page::loop);
+    liveView->setVisible (page == Page::live);
     if (page == Page::studio)
         studioView->toFront (false);
     else if (page == Page::drums)
         drumView->toFront (false);
     else if (page == Page::loop)
         loopView->toFront (false);
+    else if (page == Page::live)
+        liveView->toFront (false);
     else if (tunerDisplay.isVisible())
         tunerDisplay.toFront (false);
 }
@@ -445,12 +499,12 @@ void PomanEditor::showMidiMenu (const juce::String& target, juce::Component& anc
 
     juce::PopupMenu menu;
     menu.addSectionHeader ("MIDI");
-    menu.addItem (1, learningThis ? "Cancel MIDI learn" : "MIDI learn: move a knob, pedal or footswitch");
+    menu.addItem (1, tr (learningThis ? "Cancel MIDI learn" : "MIDI learn: move a knob, pedal or footswitch"));
     if (cc >= 0)
-        menu.addItem (2, "Forget CC " + juce::String (cc));
-    menu.addItem (3, "Forget all MIDI mappings", router.hasMappings());
+        menu.addItem (2, tr ("Forget CC ") + juce::String (cc));
+    menu.addItem (3, tr ("Forget all MIDI mappings"), router.hasMappings());
     menu.addSeparator();
-    menu.addItem (4, "Program Change n loads preset n (always on)", false);
+    menu.addItem (4, tr ("Program Change n loads preset n (always on)"), false);
 
     menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&anchor),
                         [this, target, learningThis] (int result)
@@ -475,19 +529,19 @@ void PomanEditor::refreshMidiLabels()
     for (auto& k : knobs)
     {
         const int cc = router.getCcFor (k->paramId);
-        const auto text = learning == k->paramId ? juce::String ("LEARN...") : k->baseName + (cc >= 0 ? " [" + juce::String (cc) + "]" : juce::String());
+        const auto text = learning == k->paramId ? tr ("LEARN...") : tr (k->baseName) + (cc >= 0 ? " [" + juce::String (cc) + "]" : juce::String());
         if (k->label.getText() != text)
             k->label.setText (text, juce::dontSendNotification);
         k->label.setColour (juce::Label::textColourId, learning == k->paramId ? (blinkOn ? palette::kelp : palette::text)
                                                                               : palette::dimText);
-        k->slider.setTooltip (cc >= 0 ? "MIDI CC " + juce::String (cc) + " (right-click for MIDI)" : "Right-click for MIDI learn");
+        k->slider.setTooltip (cc >= 0 ? "MIDI CC " + juce::String (cc) + tr (" (right-click for MIDI)") : tr ("Right-click for MIDI learn"));
     }
 
     const auto markButton = [&] (juce::Button& b, const juce::String& target)
     {
         const int cc = router.getCcFor (target);
-        b.setTooltip (learning == target ? "Waiting for a MIDI controller..."
-                                         : (cc >= 0 ? "MIDI CC " + juce::String (cc) : juce::String ("Right-click for MIDI learn")));
+        b.setTooltip (learning == target ? tr ("Waiting for a MIDI controller...")
+                                         : (cc >= 0 ? "MIDI CC " + juce::String (cc) : tr ("Right-click for MIDI learn")));
         b.setAlpha (learning == target && ! blinkOn ? 0.4f : 1.0f);
     };
     for (auto& s : sections)
@@ -519,12 +573,16 @@ void PomanEditor::timerCallback()
     inputMeter.pushPeak (processor.takeInputPeak());
     outputMeter.pushPeak (processor.takeOutputPeak());
 
-    if (tunerDisplay.isVisible())
-        tunerDisplay.setReading (processor.analyseTuner());
+    if (processor.isTunerActive())
+    {
+        lastTunerReading = processor.analyseTuner();
+        tunerDisplay.setReading (lastTunerReading);
+    }
 
     refreshHarmonizerInfo();
     refreshModLabels();
     refreshFileLabels();
+    poman::i18n::retranslate (*this); // texts the code just set (in English) follow the language
 
     const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
     const float reduction = processor.getCompressorGainReductionDb();
@@ -621,7 +679,7 @@ void EqCurve::paint (juce::Graphics& g)
     {
         g.setColour (palette::dimText);
         g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
-        g.drawText ("BYPASSED", bounds.reduced (8.0f, 4.0f), juce::Justification::topRight);
+        g.drawText (tr ("BYPASSED"), bounds.reduced (8.0f, 4.0f), juce::Justification::topRight);
     }
 }
 
@@ -700,7 +758,7 @@ void TunerDisplay::paint (juce::Graphics& g)
     g.setFont (juce::FontOptions (h * 0.08f));
     g.setColour (palette::dimText);
     const auto info = hasPitch ? juce::String (current.frequency, 1) + " Hz   " + (smoothedCents >= 0.0f ? "+" : "") + juce::String (smoothedCents, 1) + " cents"
-                               : juce::String ("Play a string - output muted");
+                               : tr ("Play a string - output muted");
     g.drawText (info, bounds.withTop (bounds.getBottom() - h * 0.42f).withHeight (h * 0.12f), juce::Justification::centred);
 
     // Cents scale -50..+50
@@ -859,7 +917,7 @@ void PomanEditor::refreshHarmonizerInfo()
     if (! diatonic)
         text = "V1 " + juce::String (processor.getHarmonizerSemitones (0)) + " st   |   V2 " + juce::String (processor.getHarmonizerSemitones (1)) + " st";
     else if (note < 0)
-        text = "Play a note...";
+        text = tr ("Play a note...");
     else
         text = poman::midiNoteName (note) + "   >   " + poman::midiNoteName (note + processor.getHarmonizerSemitones (0))
              + "  +  " + poman::midiNoteName (note + processor.getHarmonizerSemitones (1));
@@ -871,7 +929,7 @@ void PomanEditor::refreshHarmonizerInfo()
 void PomanEditor::chooseFile (PomanProcessor::FileSlot slot)
 {
     const bool nam = slot == PomanProcessor::FileSlot::namModel;
-    fileChooser = std::make_unique<juce::FileChooser> (nam ? "Load a NAM capture" : "Load a cabinet impulse response",
+    fileChooser = std::make_unique<juce::FileChooser> (tr (nam ? "Load a NAM capture" : "Load a cabinet impulse response"),
                                                        defaultFolder (nam ? "Models" : "IRs"), nam ? "*.nam" : "*.wav;*.aif;*.aiff");
     fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
                               [this, slot, nam] (const juce::FileChooser& chooser)
@@ -889,6 +947,25 @@ void PomanEditor::chooseFile (PomanProcessor::FileSlot slot)
                               });
 }
 
+void PomanEditor::stepIr (int direction)
+{
+    const auto current = processor.getFile (PomanProcessor::FileSlot::irA);
+    const auto folder = current.getParentDirectory().isDirectory() && current != juce::File() ? current.getParentDirectory() : defaultFolder ("IRs");
+    auto files = folder.findChildFiles (juce::File::findFiles, false, "*.wav;*.aif;*.aiff");
+    if (files.isEmpty())
+        return;
+    struct ByName { static int compareElements (const juce::File& a, const juce::File& b) { return a.getFileName().compareNatural (b.getFileName()); } } order;
+    files.sort (order);
+
+    // From the built-in model, > starts at the first file and < at the last.
+    int index = files.indexOf (current);
+    index = index < 0 ? (direction > 0 ? 0 : files.size() - 1) : (index + direction + files.size()) % files.size();
+    const auto result = processor.loadFile (PomanProcessor::FileSlot::irA, files[index]);
+    if (result.failed())
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, tr ("Impulse response"), result.getErrorMessage());
+    refreshFileLabels();
+}
+
 void PomanEditor::refreshFileLabels()
 {
     using Slot = PomanProcessor::FileSlot;
@@ -897,13 +974,13 @@ void PomanEditor::refreshFileLabels()
         const auto name = processor.getFileName (slot);
         if (name.isEmpty())
             return juce::String();
-        return processor.isFileSlotLoaded (slot) ? name : name + " (missing)";
+        return processor.isFileSlotLoaded (slot) ? name : name + tr (" (missing)");
     };
 
     const auto a = describe (Slot::irA), b = describe (Slot::irB);
-    juce::String cabText = "Built-in 4x12 model";
+    juce::String cabText = tr ("Built-in 4x12 model");
     if (a.isNotEmpty() && b.isNotEmpty())
-        cabText = "A: " + a + "   B: " + b + "   (aligned " + juce::String (processor.getCabAlignmentSamples()) + " smp)";
+        cabText = "A: " + a + "   B: " + b + tr ("   (aligned ") + juce::String (processor.getCabAlignmentSamples()) + tr (" smp)");
     else if (a.isNotEmpty() || b.isNotEmpty())
         cabText = (a.isNotEmpty() ? "A: " + a : "B: " + b);
     if (irLabel.getText() != cabText)
@@ -919,13 +996,13 @@ void PomanEditor::refreshFileLabels()
         namText = "NAM: " + capture;
         const double hostRate = processor.getSampleRate(), modelRate = processor.getNamModelRate();
         if (processor.isFileSlotLoaded (Slot::namModel) && hostRate > 0.0 && modelRate > 0.0 && std::abs (hostRate - modelRate) > 1.0)
-            namText << "   (" << juce::String (modelRate / 1000.0, 1) << " kHz model, +"
-                    << juce::String (1000.0 * processor.getNamResamplingLatency() / hostRate, 1) << " ms: set your interface to "
+            namText << "   (" << juce::String (modelRate / 1000.0, 1) << tr (" kHz model, +")
+                    << juce::String (1000.0 * processor.getNamResamplingLatency() / hostRate, 1) << tr (" ms: set your interface to ")
                     << juce::String (modelRate / 1000.0, 0) << " kHz)";
     }
     else if (namSelected)
     {
-        namText = "No capture loaded: press LOAD NAM (Glass Clean plays meanwhile)";
+        namText = tr ("No capture loaded: press LOAD NAM (Glass Clean plays meanwhile)");
     }
     if (namLabel.getText() != namText)
         namLabel.setText (namText, juce::dontSendNotification);
@@ -970,12 +1047,12 @@ void PomanEditor::paint (juce::Graphics& g)
     const float scale = (float) getWidth() / 1040.0f;
     auto header = getLocalBounds().removeFromTop ((int) (64 * scale)).reduced ((int) (20 * scale), 0);
     g.setColour (palette::text);
-    g.setFont (juce::FontOptions (34.0f * scale, juce::Font::bold));
+    g.setFont (juce::FontOptions (30.0f * scale, juce::Font::bold));
     g.drawText ("POMAN", header, juce::Justification::centredLeft);
     g.setColour (palette::biolume);
     g.setFont (juce::FontOptions (11.0f * scale));
     if (studioView == nullptr) // the standalone needs the room for its page buttons
-        g.drawText ("GUITAR AMP SUITE", header.withTrimmedLeft ((int) (128 * scale)), juce::Justification::centredLeft);
+        g.drawText (tr ("GUITAR AMP SUITE"), header.withTrimmedLeft ((int) (128 * scale)), juce::Justification::centredLeft);
 
     for (auto& s : sections)
     {
@@ -990,7 +1067,7 @@ void PomanEditor::paint (juce::Graphics& g)
 
         g.setColour (palette::text);
         g.setFont (juce::FontOptions (13.0f * scale, juce::Font::bold));
-        g.drawText (s->title, s->bounds.reduced ((int) (14 * scale), 0).withHeight ((int) (34 * scale)).withTrimmedLeft (s->power ? (int) (24 * scale) : 0),
+        g.drawText (tr (s->title), s->bounds.reduced ((int) (14 * scale), 0).withHeight ((int) (34 * scale)).withTrimmedLeft (s->power ? (int) (24 * scale) : 0),
                     juce::Justification::centredLeft);
     }
 }
@@ -1004,33 +1081,36 @@ void PomanEditor::resized()
     auto header = area.removeFromTop (sc (64));
     area.removeFromBottom (sc (14));
 
-    auto io = header.removeFromRight (sc (266)).reduced (0, sc (6));
-    calButton.setBounds (io.removeFromLeft (sc (46)).withSizeKeepingCentre (sc (42), sc (26)));
+    auto io = header.removeFromRight (sc (244)).reduced (0, sc (6));
+    calButton.setBounds (io.removeFromLeft (sc (44)).withSizeKeepingCentre (sc (40), sc (26)));
     for (auto [k, meter] : { std::pair { inputKnob, &inputMeter }, std::pair { outputKnob, &outputMeter } })
     {
-        auto cell = io.removeFromLeft (sc (110));
-        k->label.setBounds (cell.removeFromLeft (sc (50)).withSizeKeepingCentre (sc (50), sc (16)));
+        auto cell = io.removeFromLeft (sc (100));
+        k->label.setBounds (cell.removeFromLeft (sc (48)).withSizeKeepingCentre (sc (48), sc (16)));
         meter->setBounds (cell.removeFromRight (sc (10)).reduced (0, sc (2)));
         k->slider.setBounds (cell.withSizeKeepingCentre (sc (44), sc (52)));
         k->slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     }
 
-    header.removeFromLeft (sc (studioView != nullptr ? 132 : 270));
+    header.removeFromLeft (sc (104)); // the logo
+    languageButton.setBounds (header.removeFromLeft (sc (32)).withSizeKeepingCentre (sc (30), sc (22)));
+    header.removeFromLeft (sc (studioView != nullptr ? 4 : 134));
     if (studioView != nullptr)
     {
-        auto pages = header.removeFromLeft (sc (252)).withSizeKeepingCentre (sc (252), sc (30));
-        rigPageButton.setBounds (pages.removeFromLeft (sc (52)).reduced (sc (2), 0));
-        studioPageButton.setBounds (pages.removeFromLeft (sc (70)).reduced (sc (2), 0));
-        drumsPageButton.setBounds (pages.removeFromLeft (sc (66)).reduced (sc (2), 0));
-        loopPageButton.setBounds (pages.reduced (sc (2), 0));
+        auto pages = header.removeFromLeft (sc (326)).withSizeKeepingCentre (sc (326), sc (30));
+        rigPageButton.setBounds (pages.removeFromLeft (sc (48)).reduced (sc (2), 0));
+        studioPageButton.setBounds (pages.removeFromLeft (sc (72)).reduced (sc (2), 0));
+        drumsPageButton.setBounds (pages.removeFromLeft (sc (74)).reduced (sc (2), 0));
+        loopPageButton.setBounds (pages.removeFromLeft (sc (58)).reduced (sc (2), 0));
+        livePageButton.setBounds (pages.reduced (sc (2), 0));
         header.removeFromLeft (sc (6));
     }
     auto presetRow = header.withSizeKeepingCentre (header.getWidth(), sc (30));
-    tunerButton.setBounds (presetRow.removeFromRight (sc (80)).reduced (sc (4), 0));
-    presetRow.removeFromRight (sc (10));
-    savePresetButton.setBounds (presetRow.removeFromRight (sc (60)).reduced (sc (2), 0));
-    previousPresetButton.setBounds (presetRow.removeFromLeft (sc (30)).reduced (sc (2), 0));
-    nextPresetButton.setBounds (presetRow.removeFromRight (sc (30)).reduced (sc (2), 0));
+    tunerButton.setBounds (presetRow.removeFromRight (sc (78)).reduced (sc (3), 0));
+    presetRow.removeFromRight (sc (4));
+    savePresetButton.setBounds (presetRow.removeFromRight (sc (80)).reduced (sc (2), 0));
+    previousPresetButton.setBounds (presetRow.removeFromLeft (sc (28)).reduced (sc (2), 0));
+    nextPresetButton.setBounds (presetRow.removeFromRight (sc (28)).reduced (sc (2), 0));
     presetBox.setBounds (presetRow.reduced (sc (2), 0));
 
     const int gap = sc (10);
@@ -1057,7 +1137,7 @@ void PomanEditor::resized()
         }
     };
 
-    placeRow (pedals, { gateSection, compSection, octaveSection, driveSection }, { 1, 3, 3, 3 });
+    placeRow (pedals, { gateSection, compSection, wahSection, octaveSection, driveSection }, { 3, 6, 6, 5, 6 });
     placeRow (ampRow, { ampSection }, { 1 });
     placeRow (eqRow, { eqSection }, { 1 });
     placeRow (harmRow, { harmonizerSection, modSection }, { 3, 2 });
@@ -1107,6 +1187,15 @@ void PomanEditor::resized()
         if (s.get() == modSection)
             modTypeBox.setBounds (titleBar.removeFromRight (sc (120)).reduced (sc (2), sc (1)));
 
+        if (s.get() == wahSection)
+        {
+            wahModeBox.setBounds (titleBar.removeFromRight (sc (78)).reduced (sc (2), sc (1)));
+            wahAutoButton.setBounds (titleBar.removeFromRight (sc (66)).reduced (sc (2), sc (1)));
+        }
+
+        if (s.get() == reverbSection)
+            revTypeBox.setBounds (titleBar.removeFromRight (sc (70)).reduced (sc (2), sc (1)));
+
         if (s.get() == harmonizerSection)
         {
             harmScaleBox.setBounds (titleBar.removeFromRight (sc (150)).reduced (sc (2), sc (1)));
@@ -1120,6 +1209,8 @@ void PomanEditor::resized()
             builtInCabButton.setBounds (titleBar.removeFromRight (sc (70)).reduced (sc (2), sc (1)));
             irBButton.setBounds (titleBar.removeFromRight (sc (50)).reduced (sc (2), sc (1)));
             irAButton.setBounds (titleBar.removeFromRight (sc (50)).reduced (sc (2), sc (1)));
+            irNextButton.setBounds (titleBar.removeFromRight (sc (30)).reduced (sc (2), sc (1)));
+            irPrevButton.setBounds (titleBar.removeFromRight (sc (30)).reduced (sc (2), sc (1)));
             irLabel.setBounds (inner.removeFromTop (sc (16)));
         }
 
@@ -1133,5 +1224,6 @@ void PomanEditor::resized()
         studioView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
         drumView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
         loopView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
+        liveView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
     }
 }

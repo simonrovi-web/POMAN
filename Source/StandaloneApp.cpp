@@ -10,6 +10,7 @@
 #include <juce_audio_plugin_client/Standalone/juce_StandaloneFilterWindow.h>
 
 #include "PortablePaths.h"
+#include "Localisation.h"
 #include "PluginProcessor.h"
 
 namespace
@@ -144,13 +145,14 @@ public:
             // --studio switches to the STUDIO page first (finds the page button by its text).
             const juce::String page = commandLine.contains ("--studio") ? "STUDIO"
                                     : commandLine.contains ("--drums")  ? "DRUMS"
-                                    : commandLine.contains ("--loop")   ? "LOOP" : "";
+                                    : commandLine.contains ("--loop")   ? "LOOP"
+                                    : commandLine.contains ("--live")   ? "LIVE" : "";
             if (page.isNotEmpty())
                 juce::Timer::callAfterDelay (800, [this, page]
                 {
                     std::function<void (juce::Component&)> clickPage = [&clickPage, page] (juce::Component& c)
                     {
-                        if (auto* b = dynamic_cast<juce::Button*> (&c); b != nullptr && b->getButtonText() == page)
+                        if (auto* b = dynamic_cast<juce::Button*> (&c); b != nullptr && poman::i18n::englishOf (b->getButtonText()) == page)
                             b->triggerClick();
                         for (auto* child : c.getChildren())
                             clickPage (*child);

@@ -1,5 +1,8 @@
 ﻿// Offline render of every amp model and drive type: checks for NaN/silence/runaway levels
 // and prints RMS so the models can be level-matched.
+#include "dsp/Wah.h"
+#include "dsp/NoiseGate.h"
+#include "dsp/Ambience.h"
 #include "dsp/ToneStack.h"
 #include "dsp/Looper.h"
 #include "dsp/CabSim.h"
@@ -883,5 +886,570 @@ int main()
                      range.getStart() * 2.0f, range.getEnd() * 2.0f, sumSpread);
     }
 
+
+    std::printf ("-- Studio reverb (FDN) --\n");
+    {
+        constexpr int seconds = 8;
+        const int total = (int) sampleRate * seconds;
+        // Wet-only impulse response (dry removed) of one type/size/tone, stereo.
+        const auto impulse = [&] (poman::Ambience::Type type, float size, float tone)
+        {
+            poman::Ambience rev;
+            rev.prepare (sampleRate, blockSize);
+            rev.setParams (size, 1.0f, type, tone);
+            juce::AudioBuffer<float> buf (2, total);
+            buf.clear();
+            buf.setSample (0, 0, 1.0f), buf.setSample (1, 0, 1.0f);
+            for (int start = 0; start < total; start += blockSize)
+            {
+                auto b = juce::dsp::AudioBlock<float> (buf).getSubBlock ((size_t) start, (size_t) juce::jmin (blockSize, total - start));
+                rev.process (b);
+            }
+            buf.setSample (0, 0, buf.getSample (0, 0) - 0.65f), buf.setSample (1, 0, buf.getSample (1, 0) - 0.65f); // dry 1 - 0.35 mix
+            return buf;
+        };
+        // RT60 from the Schroeder backward integral (-5 to -25 dB, extrapolated), optionally band-limited.
+        const auto rt60 = [&] (const juce::AudioBuffer<float>& ir, double bandHz)
+        {
+            std::vector<float> x (ir.getReadPointer (0), ir.getReadPointer (0) + total);
+            if (bandHz > 0.0)
+            {
+                poman::Biquad bp1, bp2;
+                bp1.set (poman::ArrayCoeffs::makeBandPass (sampleRate, bandHz, 1.4));
+                bp2.set (poman::ArrayCoeffs::makeBandPass (sampleRate, bandHz, 1.4));
+                for (auto& v : x)
+                    v = bp2 (bp1 (v));
+            }
+            std::vector<double> energy ((size_t) total);
+            double acc = 0.0;
+            for (int i = total - 1; i >= 0; --i)
+                energy[(size_t) i] = (acc += (double) x[(size_t) i] * x[(size_t) i]);
+            const auto timeAt = [&] (double db)
+            {
+                for (int i = 0; i < total; ++i)
+                    if (10.0 * std::log10 (energy[(size_t) i] / energy[0]) < db)
+                        return i / sampleRate;
+                return (double) seconds;
+            };
+            return 3.0 * (timeAt (-25.0) - timeAt (-5.0));
+        };
+
+        for (int t = 0; t < (int) poman::Ambience::Type::count; ++t)
+        {
+            const auto type = (poman::Ambience::Type) t;
+            const auto name = poman::Ambience::typeNames()[t];
+            const auto small = impulse (type, 0.2f, 0.5f), large = impulse (type, 0.9f, 0.5f);
+            const double rtSmall = rt60 (small, 0.0), rtLarge = rt60 (large, 0.0);
+            const double rtLow = rt60 (large, 500.0), rtHigh = rt60 (large, 6000.0);
+
+            // Stereo: correlation of the two tails after the first 50 ms.
+            double sll = 0.0, srr = 0.0, slr = 0.0;
+            for (int i = (int) (0.05 * sampleRate); i < total; ++i)
+            {
+                const double l = large.getSample (0, i), r = large.getSample (1, i);
+                sll += l * l, srr += r * r, slr += l * r;
+            }
+            const double correlation = slr / std::sqrt (sll * srr + 1e-30);
+            // Silence at the end (no ringing loop), and finite everywhere.
+            const float tailPeak = large.getMagnitude (0, total - (int) sampleRate, (int) sampleRate);
+            bool finiteAll = true;
+            for (int i = 0; i < total; ++i)
+                finiteAll = finiteAll && std::isfinite (large.getSample (0, i)) && std::isfinite (large.getSample (1, i));
+
+            const bool ok = finiteAll && rtLarge > rtSmall * 1.5 && rtHigh < rtLow && std::abs (correlation) < 0.5
+                         && tailPeak < 1.0e-3f;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s RT60 %.2f s (size 0.2) .. %.2f s (0.9); 500 Hz %.2f s > 6 kHz %.2f s; L/R corr %+.2f\n",
+                         ok ? "PASS" : "FAIL", ("reverb " + name).toRawUTF8(), rtSmall, rtLarge, rtLow, rtHigh, correlation);
+        }
+
+        // Wet/dry balance against the previous (JUCE Freeverb) reverb with the old settings, on a guitar-like
+        // pluck: the wet energy over 2 s relative to the dry path. (The old one also doubled the dry signal,
+        // so switching it on raised the level by ~5 dB; the balance is what presets rely on.)
+        {
+            const auto pluck = makePluck (sampleRate, (int) sampleRate);
+            const int span = 2 * (int) sampleRate;
+            const auto wetToDryDb = [&] (auto&& processBlock, float dryGain)
+            {
+                juce::AudioBuffer<float> buf (2, span);
+                buf.clear();
+                for (int i = 0; i < (int) pluck.size(); ++i)
+                    buf.setSample (0, i, pluck[(size_t) i]), buf.setSample (1, i, pluck[(size_t) i]);
+                for (int start = 0; start < span; start += blockSize)
+                {
+                    auto b = juce::dsp::AudioBlock<float> (buf).getSubBlock ((size_t) start, (size_t) juce::jmin (blockSize, span - start));
+                    processBlock (b);
+                }
+                double wet = 0.0, dry = 0.0;
+                for (int i = 0; i < span; ++i)
+                {
+                    const double in = i < (int) pluck.size() ? pluck[(size_t) i] : 0.0;
+                    const double w = buf.getSample (0, i) - dryGain * in;
+                    wet += w * w, dry += dryGain * dryGain * in * in;
+                }
+                return (float) (10.0 * std::log10 (wet / dry));
+            };
+            juce::dsp::Reverb old;
+            old.prepare ({ sampleRate, (juce::uint32) blockSize, 2 });
+            juce::dsp::Reverb::Parameters p;
+            p.roomSize = 0.35f + 0.6f * 0.5f, p.damping = 0.55f, p.width = 1.0f, p.wetLevel = 0.2f * 0.6f, p.dryLevel = 1.0f - 0.35f * 0.2f;
+            old.setParameters (p);
+            old.reset();
+            const float oldDb = wetToDryDb ([&] (juce::dsp::AudioBlock<float>& b) { old.process (juce::dsp::ProcessContextReplacing<float> (b)); }, 2.0f * p.dryLevel);
+            juce::String line;
+            bool ok = true;
+            for (int t = 0; t < (int) poman::Ambience::Type::count; ++t)
+            {
+                poman::Ambience rev;
+                rev.prepare (sampleRate, blockSize);
+                rev.setParams (0.5f, 0.2f, (poman::Ambience::Type) t, 0.5f);
+                const float db = wetToDryDb ([&] (juce::dsp::AudioBlock<float>& b) { rev.process (b); }, 1.0f - 0.35f * 0.2f);
+                ok = ok && std::abs (db - oldDb) < 2.0f;
+                line << poman::Ambience::typeNames()[t] << " " << juce::String (db - oldDb, 1) << " dB  ";
+            }
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s wet/dry vs previous reverb: %s\n", ok ? "PASS" : "FAIL", "reverb balance", line.toRawUTF8());
+        }
+    }
+
+    std::printf ("-- Noise gate (detect on DI, cut after the amp) --\n");
+    {
+        // DI: -70 dB pickup noise, a muted chug at 0.5 s stopped dead at 0.7 s, a ringing note at 1.5 s
+        // fading out. "Amp": 24 samples of latency, +30 dB, and its own -40 dB hiss (not in the DI).
+        const int total = (int) sampleRate * 4, latency = 24;
+        juce::Random rng (3);
+        std::vector<float> di ((size_t) total), amp ((size_t) total);
+        for (int i = 0; i < total; ++i)
+        {
+            const double t = i / sampleRate;
+            float s = 0.0003f * (rng.nextFloat() * 2.0f - 1.0f);
+            const double tone = std::sin (juce::MathConstants<double>::twoPi * 110.0 * t);
+            if (t >= 0.5 && t < 0.7) // low B of a 7-string: the slowest ripple the stop detector must ride
+                s += (float) (0.2 * std::sin (juce::MathConstants<double>::twoPi * 61.74 * t));
+            if (t >= 1.5)
+                s += (float) (0.2 * std::exp (-(t - 1.5) / 0.35) * tone);
+            di[(size_t) i] = s;
+        }
+        for (int i = 0; i < total; ++i)
+            amp[(size_t) i] = 31.6f * (i >= latency ? di[(size_t) (i - latency)] : 0.0f) + 0.01f * (rng.nextFloat() * 2.0f - 1.0f);
+        const auto ungated = amp;
+
+        poman::NoiseGate gate;
+        gate.prepare (sampleRate);
+        gate.setThreshold (-50.0f);
+        gate.setPathLatency (latency);
+        for (int start = 0; start < total; start += blockSize)
+        {
+            const int n = juce::jmin (blockSize, total - start);
+            gate.detect (di.data() + start, n);
+            gate.apply (amp.data() + start, n);
+        }
+
+        const auto rms = [&] (const std::vector<float>& x, double from, double to)
+        {
+            double s = 0.0;
+            const int a = (int) (from * sampleRate), b = (int) (to * sampleRate);
+            for (int i = a; i < b; ++i)
+                s += (double) x[(size_t) i] * x[(size_t) i];
+            return 10.0 * std::log10 (s / (b - a) + 1e-30);
+        };
+        const double hissCut = rms (ungated, 0.1, 0.45) - rms (amp, 0.1, 0.45);
+        const double onset = 0.5 + latency / sampleRate;
+        const double attackLoss = rms (ungated, onset, onset + 0.005) - rms (amp, onset, onset + 0.005);
+        // Time until the gate's own gain (gated vs ungated output) is down 20 dB, after a stop / a fade.
+        const auto closeTime = [&] (double from)
+        {
+            for (double t = from; t < from + 1.5; t += 0.001)
+                if (rms (amp, t, t + 0.002) - rms (ungated, t, t + 0.002) < -20.0)
+                    return (t - from) * 1000.0;
+            return 1500.0;
+        };
+        const double abruptMs = closeTime (0.7 + latency / sampleRate);
+        const double sustainLoss = rms (ungated, 0.52, 0.69) - rms (amp, 0.52, 0.69);
+        // The ringing note crosses the close threshold where its envelope reaches -56 dB.
+        const double crossing = 1.5 + 0.35 * std::log (0.2 / std::pow (10.0, -56.0 / 20.0)) + latency / sampleRate;
+        const double ringMs = closeTime (crossing);
+
+        const bool ok = hissCut > 40.0 && attackLoss < 0.5 && sustainLoss < 0.1 && abruptMs < 60.0 && ringMs > abruptMs * 1.5;
+        failures += ok ? 0 : 1;
+        std::printf ("%s  %-24s amp hiss -%.0f dB when silent, attack loss %.2f dB, held note loss %.2f dB, closes %.0f ms after a stop vs %.0f ms on a fade\n",
+                     ok ? "PASS" : "FAIL", "gate", hissCut, attackLoss, sustainLoss, abruptMs, ringMs);
+    }
+
+    std::printf ("-- Wah and expression pedal --\n");
+    {
+        // Frequency response of the pedal wah at heel / middle / toe: the peak must sweep 400 Hz..2.2 kHz.
+        const auto response = [&] (float position, float reso, double hz)
+        {
+            poman::Wah w;
+            w.prepare (sampleRate);
+            w.setParams (poman::Wah::Mode::pedal, position, reso);
+            w.reset();
+            std::vector<float> x ((size_t) sampleRate / 2);
+            for (size_t i = 0; i < x.size(); ++i)
+                x[i] = 0.1f * (float) std::sin (juce::MathConstants<double>::twoPi * hz * (double) i / sampleRate);
+            w.process (x.data(), (int) x.size());
+            double s = 0.0;
+            for (size_t i = x.size() / 2; i < x.size(); ++i)
+                s += (double) x[i] * x[i];
+            return 10.0 * std::log10 (s / (double) (x.size() / 2)) - 10.0 * std::log10 (0.005);
+        };
+        const auto peakHz = [&] (float position)
+        {
+            double best = 0.0, bestDb = -1e9;
+            for (double hz = 200.0; hz < 4000.0; hz *= 1.03)
+                if (const double db = response (position, 0.5f, hz); db > bestDb)
+                    bestDb = db, best = hz;
+            return std::pair { best, bestDb };
+        };
+        const auto [heelHz, heelDb] = peakHz (0.0f);
+        const auto [toeHz, toeDb] = peakHz (1.0f);
+        const double resoLow = response (0.5f, 0.0f, 400.0 * std::sqrt (5.5)) - response (0.5f, 0.0f, 300.0);
+        const double resoHigh = response (0.5f, 1.0f, 400.0 * std::sqrt (5.5)) - response (0.5f, 1.0f, 300.0);
+        const bool sweepOk = std::abs (heelHz / 400.0 - 1.0) < 0.1 && std::abs (toeHz / 2200.0 - 1.0) < 0.1
+                          && std::abs (heelDb - toeDb) < 3.0 && heelDb > 3.0 && resoHigh > resoLow + 4.0;
+        failures += sweepOk ? 0 : 1;
+        std::printf ("%s  %-24s peak %.0f Hz (heel, %+.1f dB) .. %.0f Hz (toe, %+.1f dB); RESO peak-to-300 Hz %.1f -> %.1f dB\n",
+                     sweepOk ? "PASS" : "FAIL", "wah sweep", heelHz, heelDb, toeHz, toeDb, resoLow, resoHigh);
+
+        // A pedal moving in 100 Hz steps must not click: no sample-to-sample jump beyond a steady sweep's.
+        {
+            poman::Wah w;
+            w.prepare (sampleRate);
+            const int total = (int) sampleRate;
+            std::vector<float> x ((size_t) total);
+            for (int i = 0; i < total; ++i)
+                x[(size_t) i] = 0.2f * (float) std::sin (juce::MathConstants<double>::twoPi * 330.0 * i / sampleRate);
+            float maxStep = 0.0f, last = 0.0f;
+            for (int start = 0; start < total; start += 480) // 10 ms per MIDI update
+            {
+                w.setParams (poman::Wah::Mode::pedal, (float) start / (float) total, 0.7f);
+                w.process (x.data() + start, juce::jmin (480, total - start));
+                for (int i = start; i < juce::jmin (start + 480, total); ++i)
+                    maxStep = std::max (maxStep, std::abs (x[(size_t) i] - last)), last = x[(size_t) i];
+            }
+            const bool smooth = maxStep < 0.12f; // a 330 Hz sine of this level moves up to ~0.05 per sample
+            failures += smooth ? 0 : 1;
+            std::printf ("%s  %-24s largest sample step %.3f while sweeping in 10 ms steps\n", smooth ? "PASS" : "FAIL", "wah zipper", maxStep);
+        }
+
+        // Toe switch: on when the pedal moves, off after 0.5 s at the heel; manual on is left alone.
+        {
+            using C = poman::PedalSwitch::Change;
+            poman::PedalSwitch sw;
+            bool on = false;
+            const bool engage = sw.pedalMoved (0.4f, on, true, 0.0) == C::switchOn;
+            on = engage;
+            const bool stayAtToe = sw.tick (0.8f, on, 2000.0) == C::none;
+            const bool notYet = sw.tick (0.0f, on, 2100.0) == C::none && sw.tick (0.0f, on, 2450.0) == C::none;
+            const bool off = sw.tick (0.0f, on, 2601.0) == C::switchOff;
+            poman::PedalSwitch manual;
+            const bool manualStays = manual.tick (0.0f, true, 0.0) == C::none && manual.tick (0.0f, true, 9000.0) == C::none
+                                  && manual.pedalMoved (0.5f, true, true, 9000.0) == C::none;
+            poman::PedalSwitch disabled;
+            const bool optOut = disabled.pedalMoved (0.5f, false, false, 0.0) == C::none;
+            const bool ok = engage && stayAtToe && notYet && off && manualStays && optOut;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s on by pedal, off after 0.5 s at heel, manual on kept, PEDAL ON off respected\n", ok ? "PASS" : "FAIL", "wah toe switch");
+        }
+    }
+
+    std::printf ("-- Looper tempo sync (120 BPM, 4/4) --\n");
+    {
+        constexpr int bar = 96000, beat = 24000; // at 48 kHz
+        using LState = poman::Looper::State;
+        using LCommand = poman::Looper::Command;
+        // Runs n samples of input through the looper with a transport, returning the output. The
+        // input encodes the transport sample (value = sample / 1e7) so the output shows what was looped.
+        struct Rig
+        {
+            poman::Looper looper;
+            juce::int64 transportSample = 0;
+            bool running = false;
+            std::vector<float> run (int n, bool silentInput = false)
+            {
+                std::vector<float> l ((size_t) n), r ((size_t) n);
+                for (int start = 0; start < n; start += 256)
+                {
+                    const int m = juce::jmin (256, n - start);
+                    for (int i = 0; i < m; ++i)
+                        l[(size_t) (start + i)] = r[(size_t) (start + i)] = silentInput ? 0.0f : (float) ((transportSample + i) * 1.0e-7);
+                    looper.process (l.data() + start, r.data() + start, m, { running, transportSample, 120.0 });
+                    transportSample += m;
+                }
+                return l;
+            }
+        };
+
+        // Late close without transport: 2.3 bars recorded -> 2 bars, playback continues in phase.
+        {
+            Rig rig;
+            rig.looper.prepare (48000.0);
+            rig.looper.setSync (true);
+            rig.looper.post (LCommand::main);
+            rig.run (bar * 23 / 10);
+            rig.looper.post (LCommand::main);
+            rig.run (256);
+            const bool lengthOk = std::abs (rig.looper.getLengthSeconds() * 48000.0 - 2 * bar) < 1.0 && rig.looper.getBars() == 2;
+            // Phase: 0.3 bar + 256 samples into the second cycle.
+            const double expectedPos = (bar * 23 / 10 - 2 * bar + 256) / 48000.0;
+            const bool phaseOk = std::abs (rig.looper.getPositionSeconds() - expectedPos) < 1.0e-6 && rig.looper.getState() == LState::playing;
+
+            Rig early;
+            early.looper.prepare (48000.0);
+            early.looper.setSync (true);
+            early.looper.post (LCommand::main);
+            early.run (bar * 18 / 10);
+            early.looper.post (LCommand::main);
+            early.run (256);
+            const bool stillRecording = early.looper.getState() == LState::recording;
+            early.run (2 * bar - bar * 18 / 10); // reaches the bar line
+            const bool earlyOk = stillRecording && early.looper.getState() == LState::playing && early.looper.getBars() == 2
+                              && std::abs (early.looper.getLengthSeconds() * 48000.0 - 2 * bar) < 1.0;
+
+            Rig plain; // sync off: unchanged behaviour
+            plain.looper.prepare (48000.0);
+            plain.looper.post (LCommand::main);
+            plain.run (bar * 23 / 10);
+            plain.looper.post (LCommand::main);
+            plain.run (256);
+            const bool plainOk = std::abs (plain.looper.getLengthSeconds() * 48000.0 - bar * 23 / 10) < 1.0 && plain.looper.getBars() == 0;
+
+            const bool ok = lengthOk && phaseOk && earlyOk && plainOk;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s 2.3 bars -> %d bars (in phase), 1.8 bars -> records on to %d bars, sync off keeps %.2f s\n",
+                         ok ? "PASS" : "FAIL", "loop length to bars", rig.looper.getBars(), early.looper.getBars(), plain.looper.getLengthSeconds());
+        }
+
+        // Transport running: REC at sample 10000 waits for the beat at 24000; a stopped loop restarts on its grid.
+        {
+            Rig rig;
+            rig.running = true;
+            rig.looper.prepare (48000.0);
+            rig.looper.setSync (true);
+            rig.run (10000);
+            rig.looper.post (LCommand::main);
+            rig.run (1000);
+            const bool waited = rig.looper.getState() == LState::waiting;
+            rig.run (beat - 11000 + bar - 500); // recording ~1 bar
+            rig.looper.post (LCommand::main);   // early by 500: closes on the bar line
+            rig.run (1000);
+            // Silence in: the output is the loop. Its first sample must be what came in at transport 24000.
+            const auto out = rig.run (2 * bar, true);
+            const juce::int64 loopStartTransport = rig.transportSample - 2 * bar;
+            const int offsetIntoLoop = (int) ((loopStartTransport - beat) % bar);
+            const int firstOfLoop = (bar - offsetIntoLoop) % bar; // where in `out` the loop wraps to its start
+            const bool startOk = std::abs (out[(size_t) firstOfLoop] - (float) (beat * 1.0e-7)) < 1.0e-6f;
+
+            rig.looper.post (LCommand::stop);
+            rig.run (bar / 3, true);
+            rig.looper.post (LCommand::main);
+            const auto again = rig.run (2 * bar, true);
+            // After the restart, the loop's start must again land on transport samples 24000 + k * bar.
+            int restartAt = -1;
+            for (int i = 0; i < (int) again.size(); ++i)
+                if (std::abs (again[(size_t) i] - (float) (beat * 1.0e-7)) < 1.0e-6f) { restartAt = i; break; }
+            const juce::int64 restartTransport = rig.transportSample - 2 * bar + restartAt;
+            const bool gridOk = restartAt >= 0 && (restartTransport - beat) % bar == 0;
+
+            const bool ok = waited && startOk && gridOk;
+            failures += ok ? 0 : 1;
+            std::printf ("%s  %-24s waits for the beat, loop starts at transport %lld, restart after STOP lands on its grid\n",
+                         ok ? "PASS" : "FAIL", "loop locked to drums", (long long) (startOk ? beat : -1));
+        }
+    }
+
+    std::printf ("-- Delay / reverb trails (spillover) --\n");
+    {
+        // A hit at 0, effect switched off at 0.2 s, a second hit at 0.3 s. With trails, the first hit's
+        // tail keeps ringing after 0.2 s, and the second hit comes out dry (no new echoes or reverb).
+        const int total = (int) sampleRate, offAt = (int) (0.2 * sampleRate), hit2 = (int) (0.3 * sampleRate);
+        const auto runBoth = [&] (bool trails)
+        {
+            poman::Ambience rev;
+            rev.prepare (sampleRate, blockSize);
+            rev.setParams (0.6f, 0.5f, poman::Ambience::Type::hall, 0.5f);
+            poman::PingPongDelay dly;
+            dly.prepare (sampleRate, blockSize);
+            dly.setParams (120.0f, 0.5f, 0.5f);
+            juce::AudioBuffer<float> buf (2, total);
+            buf.clear();
+            for (int ch = 0; ch < 2; ++ch)
+                buf.setSample (ch, 0, 1.0f), buf.setSample (ch, hit2, 1.0f);
+            for (int start = 0; start < total; start += blockSize)
+            {
+                const int n = juce::jmin (blockSize, total - start);
+                const bool on = start < offAt;
+                if (on || trails)
+                {
+                    dly.process (buf.getWritePointer (0, start), buf.getWritePointer (1, start), n, on);
+                    auto b = juce::dsp::AudioBlock<float> (buf).getSubBlock ((size_t) start, (size_t) n);
+                    rev.process (b, on);
+                }
+            }
+            return buf;
+        };
+        const auto withTrails = runBoth (true), cut = runBoth (false);
+        // Tail energy between 0.2 and 0.3 s (before the second hit).
+        const float tail = withTrails.getRMSLevel (0, offAt + blockSize, hit2 - offAt - blockSize);
+        const float cutTail = cut.getRMSLevel (0, offAt + blockSize, hit2 - offAt - blockSize);
+        // After the second hit: the trailing output minus the first hit's tail must be just the dry hit.
+        bool secondDry = std::abs (withTrails.getSample (0, hit2) - cut.getSample (0, hit2) - 0.0f) < 0.5f;
+        // No echo of the second hit 120 ms later beyond the old tail's level.
+        const float echoZone = withTrails.getMagnitude (0, hit2 + (int) (0.115 * sampleRate), (int) (0.01 * sampleRate));
+        const float tailZone = withTrails.getMagnitude (0, hit2 - (int) (0.02 * sampleRate), (int) (0.01 * sampleRate));
+        secondDry = secondDry && echoZone < tailZone * 2.0f + 1.0e-4f;
+        const bool ok = tail > 1.0e-3f && cutTail == 0.0f && secondDry;
+        failures += ok ? 0 : 1;
+        std::printf ("%s  %-24s tail after switch-off %.1f dB (cut: silent), new notes stay dry\n", ok ? "PASS" : "FAIL", "trails",
+                     juce::Decibels::gainToDecibels (tail));
+    }
+
+    std::printf ("-- Drum kits: voicings and user samples --\n");
+    {
+        using poman::DrumMachine;
+        const double bpm = 120.0;
+        // One hit of an instrument (accent or normal) rendered dry (no room), left channel.
+        const auto hit = [&] (DrumMachine& d, int instrument, bool accent, int length)
+        {
+            d.prepare (sampleRate);
+            d.setEnabled (true);
+            d.loadPreset (9); // empty
+            d.setRoom (0.0f);
+            d.setStep (instrument, 0, accent ? 2 : 1);
+            std::vector<float> l ((size_t) length, 0.0f), r ((size_t) length, 0.0f);
+            for (int start = 0; start < length; start += blockSize)
+                d.process (l.data() + start, r.data() + start, juce::jmin (blockSize, length - start), start, bpm);
+            return l;
+        };
+        const auto decayMs = [&] (const std::vector<float>& x) // time until the envelope stays below -40 dB of its peak
+        {
+            float peak = 0.0f;
+            for (auto v : x)
+                peak = std::max (peak, std::abs (v));
+            int last = 0;
+            for (int i = 0; i < (int) x.size(); ++i)
+                if (std::abs (x[(size_t) i]) > peak * 0.01f)
+                    last = i;
+            return 1000.0 * last / sampleRate;
+        };
+        const auto highShare = [&] (const std::vector<float>& x) // energy above 7 kHz / total
+        {
+            poman::Biquad hp1, hp2;
+            hp1.set (poman::ArrayCoeffs::makeHighPass (sampleRate, 7000.0, 0.7));
+            hp2.set (poman::ArrayCoeffs::makeHighPass (sampleRate, 7000.0, 0.7));
+            double all = 0.0, high = 0.0;
+            for (auto v : x)
+            {
+                const float h = hp2 (hp1 (v));
+                all += (double) v * v, high += (double) h * h;
+            }
+            return high / (all + 1e-30);
+        };
+        const int quarterBar = (int) sampleRate / 2; // fits in one 16-step bar at 120 BPM before the next hit
+        DrumMachine rock, metal, studio, vintage;
+        rock.setKit ((int) DrumMachine::Kit::rock), metal.setKit ((int) DrumMachine::Kit::metal);
+        studio.setKit ((int) DrumMachine::Kit::studio), vintage.setKit ((int) DrumMachine::Kit::vintage);
+        const double rockKick = decayMs (hit (rock, DrumMachine::kick, false, quarterBar * 3));
+        const double metalKick = decayMs (hit (metal, DrumMachine::kick, false, quarterBar * 3));
+        const double studioCrash = highShare (hit (studio, DrumMachine::crash, false, quarterBar));
+        const double vintageCrash = highShare (hit (vintage, DrumMachine::crash, false, quarterBar));
+        const bool character = metalKick < rockKick * 0.7 && vintageCrash < studioCrash * 0.8;
+        failures += character ? 0 : 1;
+        std::printf ("%s  %-24s kick -40 dB: Metal %.0f ms < Rock %.0f ms; crash >7 kHz share: Vintage %.2f < Studio %.2f\n",
+                     character ? "PASS" : "FAIL", "kit voicings", metalKick, rockKick, vintageCrash, studioCrash);
+
+        // File names -> instruments.
+        const std::pair<const char*, int> names[] {
+            { "Kick_01", DrumMachine::kick }, { "BD2", DrumMachine::kick }, { "Bombo fuerte", DrumMachine::kick },
+            { "snare-hard", DrumMachine::snare }, { "SD_03", DrumMachine::snare }, { "caja", DrumMachine::snare },
+            { "HH closed", DrumMachine::closedHat }, { "hihat", DrumMachine::closedHat }, { "Charles", DrumMachine::closedHat },
+            { "Open Hat", DrumMachine::openHat }, { "OHH", DrumMachine::openHat }, { "clap", DrumMachine::clap },
+            { "Floor Tom", DrumMachine::lowTom }, { "tom low", DrumMachine::lowTom }, { "Rack Tom", DrumMachine::highTom },
+            { "tom1", DrumMachine::highTom }, { "Crash 16", DrumMachine::crash }, { "ride", DrumMachine::crash },
+            { "guitar riff", -1 }, { "bdsm", -1 },
+        };
+        int wrong = 0;
+        juce::String misses;
+        for (auto [n, want] : names)
+            if (DrumMachine::instrumentForFileName (n) != want)
+                ++wrong, misses << n << " ";
+        failures += wrong == 0 ? 0 : 1;
+        std::printf ("%s  %-24s %d/%d names mapped right %s\n", wrong == 0 ? "PASS" : "FAIL", "sample file names",
+                     (int) std::size (names) - wrong, (int) std::size (names), misses.toRawUTF8());
+
+        // A temporary kit folder: a quiet and a loud kick (44.1 kHz, to exercise resampling), one snare, a non-drum file.
+        const auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("poman_kit_test");
+        folder.deleteRecursively();
+        folder.createDirectory();
+        const auto writeWav = [&] (const juce::String& name, double rate, float level, double hz)
+        {
+            const int n = (int) (rate * 0.3);
+            juce::AudioBuffer<float> b (1, n);
+            for (int i = 0; i < n; ++i)
+                b.setSample (0, i, level * (float) (std::sin (juce::MathConstants<double>::twoPi * hz * i / rate) * std::exp (-i / (rate * 0.08))));
+            std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (folder.getChildFile (name));
+            juce::WavAudioFormat wav;
+            auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions{}.withSampleRate (rate).withNumChannels (1).withBitsPerSample (24));
+            writer->writeFromAudioSampleBuffer (b, 0, n);
+        };
+        writeWav ("Kick soft.wav", 44100.0, 0.2f, 60.0);
+        writeWav ("Kick hard.wav", 44100.0, 0.8f, 60.0);
+        writeWav ("Snare.wav", 48000.0, 0.5f, 200.0);
+        writeWav ("Riff idea.wav", 48000.0, 0.5f, 440.0);
+
+        DrumMachine s;
+        s.prepare (sampleRate);
+        const auto result = s.loadSampleKit (folder);
+        const bool loaded = result.wasOk() && s.getKit() == (int) DrumMachine::Kit::samples && s.getSampleKitName() == "poman_kit_test";
+        const auto normal = hit (s, DrumMachine::kick, false, quarterBar);
+        const auto accent = hit (s, DrumMachine::kick, true, quarterBar);
+        float normalPeak = 0.0f, accentPeak = 0.0f;
+        for (int i = 0; i < quarterBar; ++i)
+            normalPeak = std::max (normalPeak, std::abs (normal[(size_t) i])), accentPeak = std::max (accentPeak, std::abs (accent[(size_t) i]));
+        // Layers: the accent plays the loud file (about 4x the soft one), not a scaled copy.
+        const bool layers = accentPeak > normalPeak * 3.0f;
+        // Playback is the file, on time: the soft kick's 60 Hz at the engine rate (first zero crossing at 1/120 s).
+        int crossing = 0;
+        for (int i = (int) (sampleRate * 0.001); i < quarterBar; ++i) // past the resampler's start-up ripple
+            if (normal[(size_t) i - 1] > 0.0f && normal[(size_t) i] <= 0.0f) { crossing = i; break; }
+        const bool pitchOk = std::abs (crossing - sampleRate / 120.0) < 3.0;
+        // Missing instrument (hi hat): the Studio voice plays.
+        const auto hat = hit (s, DrumMachine::closedHat, false, quarterBar / 4);
+        float hatPeak = 0.0f;
+        for (auto v : hat)
+            hatPeak = std::max (hatPeak, std::abs (v));
+        const bool fallback = hatPeak > 0.01f;
+
+        // Swapping the kit while a long sample plays: no crash, the old voice stops.
+        bool swapSafe = true;
+        {
+            s.setStep (DrumMachine::kick, 0, 2);
+            std::vector<float> l (blockSize), r (blockSize);
+            for (int b = 0; b < 40; ++b)
+            {
+                if (b == 3)
+                    s.clearSampleKit();
+                if (b == 6)
+                    swapSafe = swapSafe && s.loadSampleKit (folder).wasOk();
+                std::fill (l.begin(), l.end(), 0.0f), std::fill (r.begin(), r.end(), 0.0f);
+                s.process (l.data(), r.data(), blockSize, b * blockSize, bpm);
+                for (auto v : l)
+                    swapSafe = swapSafe && std::isfinite (v);
+            }
+        }
+        // The folder is saved with the session and reloaded.
+        DrumMachine restored;
+        restored.prepare (sampleRate);
+        restored.fromValueTree (s.toValueTree());
+        const bool persisted = restored.hasSampleKit() && restored.getKit() == (int) DrumMachine::Kit::samples;
+        folder.deleteRecursively();
+
+        const bool ok = loaded && layers && pitchOk && fallback && swapSafe && persisted;
+        failures += ok ? 0 : 1;
+        std::printf ("%s  %-24s loaded %d, accent/normal %.1f (two layers), 60 Hz crossing at %d (want %.0f), missing hat -> Studio %d, swap %d, saved %d\n",
+                     ok ? "PASS" : "FAIL", "sample kit", loaded, accentPeak / juce::jmax (1.0e-6f, normalPeak), crossing, sampleRate / 120.0,
+                     fallback, swapSafe, persisted);
+    }
     return failures;
 }

@@ -17,6 +17,7 @@
 #include "dsp/NoiseGate.h"
 #include "dsp/Octaver.h"
 #include "dsp/Overdrive.h"
+#include "dsp/Wah.h"
 #include "PortablePaths.h"
 #include "MidiRouter.h"
 #include "PresetManager.h"
@@ -58,6 +59,7 @@ public:
     juce::Result loadFile (FileSlot slot, const juce::File& file); // message thread
     void clearFile (FileSlot slot);                                // message thread
     juce::String getFileName (FileSlot slot) const;                // empty when nothing is set
+    juce::File getFile (FileSlot slot) const;                      // resolved stored path (may be missing)
     bool isFileSlotLoaded (FileSlot slot) const;
 
     // AMPLIFIER choices. "NAM Capture" stays at index 10 forever (where 0.11 put it) so saved states
@@ -119,7 +121,7 @@ private:
     void processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
     enum class Param
     {
-        input, output, gateOn, gateThreshold, compOn, compSustain, compAttack, compLevel, compBlend, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, cabMix, cabLowCut, cabHighCut, eqOn, eq31, eq63, eq125, eq250, eq500, eq1k, eq2k, eq4k, eq8k, eq16k, eqLowCut, eqHighCut, eqLevel, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, modOn, modType, modRate, modDepth, modMix, modFeedback, dlyOn, dlyTime, dlyFeedback, dlyMix, dlySync, revOn, revSize, revMix,
+        input, output, gateOn, gateThreshold, compOn, compSustain, compAttack, compLevel, compBlend, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, cabMix, cabLowCut, cabHighCut, eqOn, eq31, eq63, eq125, eq250, eq500, eq1k, eq2k, eq4k, eq8k, eq16k, eqLowCut, eqHighCut, eqLevel, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, modOn, modType, modRate, modDepth, modMix, modFeedback, dlyOn, dlyTime, dlyFeedback, dlyMix, dlySync, revOn, revSize, revMix, revType, revTone, wahOn, wahMode, wahPos, wahReso, wahAuto, volPedal,
         count
     };
 
@@ -131,6 +133,7 @@ private:
     poman::NoiseGate gate;
     poman::Compressor compressor;
     poman::Octaver octaver;
+    poman::Wah wah;
     poman::Overdrive overdrive;
     poman::AmpModel amp;
     poman::CabSim cab;
@@ -159,15 +162,21 @@ private:
     poman::Modulation modulation;
     poman::PingPongDelay delay;
     poman::Ambience reverb;
+    static constexpr double trailSeconds = 8.0; // longest hall tail / delay feedback to fade out
+    int delayTrail = 0, reverbTrail = 0;        // samples of trail left after switching off
 
     juce::AudioBuffer<float> monoBuffer;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> inputGain { 1.0f }, outputGain { 1.0f };
+    juce::SmoothedValue<float> volumePedal { 1.0f };
+    poman::PedalSwitch wahSwitch; // message thread
     int maxChunkSize = 512;
 
     std::unique_ptr<poman::PresetManager> presetManager;
 
     poman::MidiRouter midiRouter;
     void handleMidi(); // message thread, ~100 Hz
+    // Volume pedal taper: audio-like, silent at the heel.
+    static float volumeCurve (float position) { return position * position * position; }
     struct MidiTimer : juce::Timer
     {
         explicit MidiTimer (PomanProcessor& p) : owner (p) {}

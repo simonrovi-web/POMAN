@@ -1,6 +1,9 @@
 // Performance and aliasing measurements for each DSP module (offline, single thread).
 // CPU is reported as % of one core needed for real time at 48 kHz.
 #include "dsp/AmpModel.h"
+#include "dsp/Ambience.h"
+#include "dsp/NoiseGate.h"
+#include "dsp/Wah.h"
 #include "dsp/CabSim.h"
 #include "dsp/DrumMachine.h"
 #include "dsp/GraphicEQ.h"
@@ -139,6 +142,40 @@ int main()
             std::copy (input.begin() + b * block, input.begin() + (b + 1) * block, buf.begin());
             h.track (buf.data(), block);
             h.process (buf.data(), l.data(), r.data(), block);
+        }));
+    }
+    for (int t = 0; t < (int) poman::Ambience::Type::count; ++t)
+    {
+        poman::Ambience rev;
+        rev.prepare (sampleRate, block);
+        rev.setParams (0.6f, 0.3f, (poman::Ambience::Type) t, 0.5f);
+        juce::AudioBuffer<float> stereo (2, block);
+        std::printf ("  reverb %-15s %5.2f %%\n", poman::Ambience::typeNames()[t].toRawUTF8(), cpuPercent ([&] (int b)
+        {
+            stereo.copyFrom (0, 0, input.data() + b * block, block);
+            stereo.copyFrom (1, 0, input.data() + b * block, block);
+            juce::dsp::AudioBlock<float> ab (stereo);
+            rev.process (ab);
+        }));
+    }
+    {
+        poman::Wah w;
+        w.prepare (sampleRate);
+        w.setParams (poman::Wah::Mode::autoWah, 0.5f, 0.6f);
+        poman::NoiseGate g;
+        g.prepare (sampleRate);
+        g.setThreshold (-60.0f);
+        g.setPathLatency (20);
+        std::printf ("  wah (auto)              %5.2f %%\n", cpuPercent ([&] (int b)
+        {
+            std::copy (input.begin() + b * block, input.begin() + (b + 1) * block, buf.begin());
+            w.process (buf.data(), block);
+        }));
+        std::printf ("  gate                    %5.2f %%\n", cpuPercent ([&] (int b)
+        {
+            std::copy (input.begin() + b * block, input.begin() + (b + 1) * block, buf.begin());
+            g.detect (buf.data(), block);
+            g.apply (buf.data(), block);
         }));
     }
     for (int t = 0; t < 3; ++t)

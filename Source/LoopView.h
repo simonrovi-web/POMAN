@@ -27,6 +27,7 @@ private:
     CcLookup ccFor;
 
     MidiTextButton mainButton { "REC" }, stopButton { "STOP" }, undoButton { "UNDO" }, clearButton { "CLEAR" };
+    juce::TextButton syncButton { "SYNC" };
     juce::Slider levelSlider;
     juce::Label levelLabel, hintLabel, midiLabel;
     juce::Rectangle<float> ringArea;

@@ -41,6 +41,10 @@ private:
     poman::MultitrackRecorder& recorder;
 
     juce::TextButton rewindButton { "|<" }, playButton { "PLAY" }, stopButton { "STOP" }, drumsOnButton { "DRUMS ON" }, clearButton { "CLEAR" };
+    juce::TextButton loadKitButton { "LOAD KIT" };
+    std::unique_ptr<juce::FileChooser> kitChooser;
+    void chooseSampleKit();
+    void refreshKitTooltip();
     juce::ComboBox patternBox, kitBox;
     juce::Slider bpmSlider, swingSlider, volumeSlider, roomSlider;
     juce::Label bpmLabel, swingLabel, volumeLabel, roomLabel, kitLabel, hintLabel, positionLabel;

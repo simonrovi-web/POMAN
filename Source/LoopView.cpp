@@ -1,4 +1,5 @@
 #include "LoopView.h"
+#include "Localisation.h"
 #include "Palette.h"
 
 namespace
@@ -15,6 +16,7 @@ juce::Colour stateColour (State s)
         case State::recording:   return recordRed;
         case State::overdubbing: return palette::sunlight;
         case State::playing:     return palette::kelp;
+        case State::waiting:     return palette::pressure;
         default:                 return palette::dimText;
     }
 }
@@ -28,6 +30,7 @@ juce::String stateText (State s)
         case State::playing:     return "PLAYING";
         case State::overdubbing: return "OVERDUB";
         case State::stopped:     return "STOPPED";
+        case State::waiting:     return "WAITING";
     }
     return {};
 }
@@ -42,6 +45,7 @@ juce::String nextAction (State s)
         case State::playing:     return "DUB";
         case State::overdubbing: return "PLAY";
         case State::stopped:     return "PLAY";
+        case State::waiting:     return "CANCEL";
     }
     return {};
 }
@@ -81,12 +85,21 @@ LoopView::LoopView (poman::Looper& l, MidiMenu menu, CcLookup lookup)
     levelSlider.onValueChange = [this] { looper.setLevel ((float) levelSlider.getValue()); };
     addAndMakeVisible (levelSlider);
 
+    syncButton.setClickingTogglesState (true);
+    syncButton.setToggleState (looper.isSynced(), juce::dontSendNotification);
+    syncButton.setColour (juce::TextButton::buttonOnColourId, palette::pressure);
+    syncButton.setTooltip ("Tempo sync: loops are whole 4/4 bars at the studio/drums tempo; while the drums run, "
+                           "recording starts on the next beat and the loop stays locked to them");
+    syncButton.onClick = [this] { looper.setSync (syncButton.getToggleState()); };
+    addAndMakeVisible (syncButton);
+
     levelLabel.setText ("LOOP LEVEL", juce::dontSendNotification);
     levelLabel.setFont (juce::FontOptions (12.0f, juce::Font::bold));
     addAndMakeVisible (levelLabel);
 
     hintLabel.setText ("REC starts the loop, PLAY closes it, DUB layers on top. UNDO removes the last layer (press again to bring it back). "
-                       "Up to 60 s. Loops play into STUDIO recordings. Right-click a button to assign a MIDI footswitch.",
+                       "Up to 60 s. SYNC locks loops to the drums' tempo in whole bars. Loops play into STUDIO recordings. "
+                       "Right-click a button to assign a MIDI footswitch.",
                        juce::dontSendNotification);
     hintLabel.setFont (juce::FontOptions (12.0f));
     hintLabel.setJustificationType (juce::Justification::centred);
@@ -116,6 +129,7 @@ void LoopView::timerCallback()
     mainButton.setColour (juce::TextButton::buttonOnColourId, stateColour (s));
     mainButton.setToggleState (s == State::recording || s == State::playing || s == State::overdubbing, juce::dontSendNotification);
     undoButton.setButtonText (looper.canRedo() ? "REDO" : "UNDO");
+    syncButton.setToggleState (looper.isSynced(), juce::dontSendNotification); // sessions can change it
     undoButton.setEnabled (looper.canUndo() || looper.canRedo());
 
     juce::String midi;
@@ -124,6 +138,7 @@ void LoopView::timerCallback()
         if (const int cc = ccFor (target); cc >= 0)
             midi << name << " = CC " << cc << "     ";
     midiLabel.setText (midi.isEmpty() ? juce::String ("No MIDI footswitch assigned") : midi.trim(), juce::dontSendNotification);
+    poman::i18n::retranslate (*this);
     repaint (ringArea.toNearestInt().expanded (4));
 }
 
@@ -157,11 +172,13 @@ void LoopView::paint (juce::Graphics& g)
 
     g.setColour (colour);
     g.setFont (juce::FontOptions (radius * 0.22f, juce::Font::bold));
-    g.drawText (stateText (s), juce::Rectangle<float> (radius * 2.0f, radius * 0.3f).withCentre (centre.translated (0.0f, -radius * 0.18f)),
+    g.drawText (poman::i18n::tr (stateText (s)), juce::Rectangle<float> (radius * 2.0f, radius * 0.3f).withCentre (centre.translated (0.0f, -radius * 0.18f)),
                 juce::Justification::centred);
 
-    const juce::String time = s == State::recording ? juce::String (looper.getPositionSeconds(), 1) + " s"
-                            : (length > 0.0 ? juce::String (looper.getPositionSeconds(), 1) + " / " + juce::String (length, 1) + " s" : juce::String ("--"));
+    juce::String time = s == State::recording ? juce::String (looper.getPositionSeconds(), 1) + " s"
+                      : (length > 0.0 ? juce::String (looper.getPositionSeconds(), 1) + " / " + juce::String (length, 1) + " s" : juce::String ("--"));
+    if (const int bars = looper.getBars(); bars > 0 && s != State::recording)
+        time << "  (" << bars << poman::i18n::tr (bars == 1 ? " bar)" : " bars)");
     g.setColour (palette::text);
     g.setFont (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), radius * 0.16f, juce::Font::bold));
     g.drawText (time, juce::Rectangle<float> (radius * 2.0f, radius * 0.25f).withCentre (centre.translated (0.0f, radius * 0.2f)),
@@ -177,6 +194,7 @@ void LoopView::resized()
 
     auto controls = area.removeFromBottom (190);
     auto levelRow = controls.removeFromBottom (36).withSizeKeepingCentre (420, 36);
+    syncButton.setBounds (levelRow.removeFromRight (70).reduced (6, 2));
     levelLabel.setBounds (levelRow.removeFromLeft (90));
     levelSlider.setBounds (levelRow);
     controls.removeFromBottom (12);

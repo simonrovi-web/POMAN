@@ -5,6 +5,7 @@
 #include "StudioView.h"
 #include "DrumView.h"
 #include "LoopView.h"
+#include "LiveView.h"
 #include "RightClickable.h"
 
 class PomanLookAndFeel : public juce::LookAndFeel_V4
@@ -98,6 +99,7 @@ private:
     void layoutKnobs (Section&, juce::Rectangle<int> area);
     void refreshFileLabels();
     void chooseFile (PomanProcessor::FileSlot slot);
+    void stepIr (int direction); // loads the previous/next IR of slot A's folder into slot A
     void refreshPresetBox();
     void showSavePresetDialog();
     void setTunerVisible (bool visible);
@@ -143,9 +145,12 @@ private:
     std::array<Knob*, 2> harmIntervalKnobs {};
     juce::Label harmInfoLabel;
 
-    juce::ComboBox modTypeBox;
+    juce::ComboBox modTypeBox, revTypeBox, wahModeBox;
+    juce::TextButton wahAutoButton { "PEDAL ON" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> wahAutoAttachment;
 
     Section* compSection = nullptr;
+    Section* wahSection = nullptr;
     juce::Label compGrLabel;
     Knob* delayTimeKnob = nullptr;
     juce::ComboBox delaySyncBox;
@@ -156,13 +161,14 @@ private:
     float calibrationPeak = 0.0f;
     void startCalibration();
     void updateCalibration (double now);
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modTypeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modTypeAttachment, revTypeAttachment, wahModeAttachment;
     std::array<Knob*, 2> modVariableKnobs {}; // mix/feedback, relabelled as shape/stereo for the tremolo
     int shownModType = -1;
     void refreshModLabels();
     bool shownDiatonic = true;
     int shownScale = -1;
 
+    juce::TextButton irPrevButton { "<" }, irNextButton { ">" };
     juce::TextButton irAButton { "IR A" }, irBButton { "IR B" }, builtInCabButton { "BUILT-IN" }, loadNamButton { "LOAD NAM" };
     juce::Label irLabel, namLabel;
     std::unique_ptr<juce::FileChooser> fileChooser;
@@ -177,13 +183,20 @@ private:
     LevelMeter inputMeter, outputMeter;
 
     // Standalone only: RIG / STUDIO pages (a DAW does its own recording).
-    juce::TextButton rigPageButton { "RIG" }, studioPageButton { "STUDIO" }, drumsPageButton { "DRUMS" }, loopPageButton { "LOOP" };
+    juce::TextButton rigPageButton { "RIG" }, studioPageButton { "STUDIO" }, drumsPageButton { "DRUMS" }, loopPageButton { "LOOP" },
+                     livePageButton { "LIVE" };
     std::unique_ptr<StudioView> studioView;
     std::unique_ptr<DrumView> drumView;
     std::unique_ptr<LoopView> loopView;
-    enum class Page { rig, studio, drums, loop };
+    std::unique_ptr<LiveView> liveView;
+    enum class Page { rig, studio, drums, loop, live };
     void showPage (Page page);
     TunerDisplay tunerDisplay;
+    poman::TunerReading lastTunerReading; // shared with the LIVE page (one consumer of the tuner FIFO)
+
+    // EN / ES: switches the interface language (saved for next time).
+    juce::TextButton languageButton;
+    void applyLanguage();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PomanEditor)
 };

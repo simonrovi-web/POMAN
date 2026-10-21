@@ -1,5 +1,6 @@
 #include "DrumView.h"
 #include "Palette.h"
+#include "Localisation.h"
 
 namespace
 {
@@ -149,10 +150,24 @@ DrumView::DrumView (DrumMachine& d, poman::MultitrackRecorder& r) : drums (d), r
     kitBox.setColour (juce::ComboBox::outlineColourId, palette::ember.withAlpha (0.6f));
     kitBox.onChange = [this]
     {
-        drums.setKit (kitBox.getSelectedId() - 1);
-        roomSlider.setEnabled (drums.getKit() == (int) DrumMachine::Kit::studio);
+        const int k = kitBox.getSelectedId() - 1;
+        if (k == (int) DrumMachine::Kit::samples && ! drums.hasSampleKit())
+        {
+            chooseSampleKit(); // nothing to play yet: ask for a folder
+            kitBox.setSelectedId (drums.getKit() + 1, juce::dontSendNotification);
+            return;
+        }
+        drums.setKit (k);
+        roomSlider.setEnabled (drums.getKit() != (int) DrumMachine::Kit::electronic);
+        refreshKitTooltip();
     };
     addAndMakeVisible (kitBox);
+
+    loadKitButton.setTooltip ("Load a folder of WAV samples as the drum kit (kick, snare, hats, toms, cymbals named in the file names)");
+    loadKitButton.setColour (juce::TextButton::buttonOnColourId, palette::ember);
+    loadKitButton.onClick = [this] { chooseSampleKit(); };
+    addAndMakeVisible (loadKitButton);
+    refreshKitTooltip();
 
     bpmSlider.setSliderStyle (juce::Slider::IncDecButtons);
     bpmSlider.setRange (40.0, 240.0, 1.0);
@@ -257,11 +272,13 @@ void DrumView::refreshControls()
         roomSlider.setValue (drums.getRoom(), juce::dontSendNotification);
     if (! kitBox.isPopupActive() && kitBox.getSelectedId() != drums.getKit() + 1)
         kitBox.setSelectedId (drums.getKit() + 1, juce::dontSendNotification);
-    roomSlider.setEnabled (drums.getKit() == (int) DrumMachine::Kit::studio);
+    roomSlider.setEnabled (drums.getKit() != (int) DrumMachine::Kit::electronic);
 }
 
 void DrumView::timerCallback()
 {
+    if (! kitBox.isPopupActive())
+        refreshKitTooltip(); // a session restore may bring a sample kit
     const bool running = recorder.getState() != poman::MultitrackRecorder::State::stopped;
     const auto position = recorder.getPlayhead();
     const int step = running && drums.isEnabled() ? drums.stepAt (position, recorder.getBpm()) : -1;
@@ -301,6 +318,32 @@ void DrumView::paint (juce::Graphics& g)
     }
 }
 
+void DrumView::chooseSampleKit()
+{
+    kitChooser = std::make_unique<juce::FileChooser> (poman::i18n::tr ("Choose a folder with drum samples (WAV)"),
+                                                      juce::File::getSpecialLocation (juce::File::userMusicDirectory));
+    kitChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+                             [this] (const juce::FileChooser& chooser)
+                             {
+                                 const auto folder = chooser.getResult();
+                                 if (! folder.isDirectory())
+                                     return;
+                                 const auto result = drums.loadSampleKit (folder);
+                                 if (result.failed())
+                                     juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                                             poman::i18n::tr ("Drum kit"), result.getErrorMessage());
+                                 kitBox.setSelectedId (drums.getKit() + 1, juce::dontSendNotification);
+                                 roomSlider.setEnabled (drums.getKit() != (int) DrumMachine::Kit::electronic);
+                                 refreshKitTooltip();
+                             });
+}
+
+void DrumView::refreshKitTooltip()
+{
+    kitBox.setTooltip (drums.hasSampleKit() ? "Samples: " + drums.getSampleKitName() + "\n" + drums.describeSampleKit().joinIntoString ("\n")
+                                            : juce::String());
+}
+
 void DrumView::resized()
 {
     auto area = getLocalBounds().reduced (16, 0).withTrimmedBottom (14).reduced (12, 10);
@@ -310,13 +353,14 @@ void DrumView::resized()
     playButton.setBounds (bar1.removeFromLeft (76).reduced (3, 2));
     stopButton.setBounds (bar1.removeFromLeft (76).reduced (3, 2));
     bar1.removeFromLeft (10);
-    positionLabel.setBounds (bar1.removeFromLeft (220).reduced (3, 2));
+    positionLabel.setBounds (bar1.removeFromLeft (180).reduced (3, 2));
     bar1.removeFromLeft (10);
     bpmLabel.setBounds (bar1.removeFromLeft (36));
     bpmSlider.setBounds (bar1.removeFromLeft (110).reduced (0, 4));
     bar1.removeFromLeft (20);
     kitLabel.setBounds (bar1.removeFromLeft (32));
-    kitBox.setBounds (bar1.removeFromLeft (150).reduced (0, 5));
+    kitBox.setBounds (bar1.removeFromLeft (130).reduced (0, 5));
+    loadKitButton.setBounds (bar1.removeFromLeft (110).reduced (4, 2));
     drumsOnButton.setBounds (bar1.removeFromRight (110).reduced (3, 2));
 
     area.removeFromTop (6);

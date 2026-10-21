@@ -42,6 +42,7 @@ public:
         sagRelease = onePoleCoeff (osRate, 120.0f);
         gridAttack = onePoleCoeff (osRate, 1.0f);
         gridRelease = onePoleCoeff (osRate, 35.0f);
+        transformerCoeff = (float) (1.0 - std::exp (-juce::MathConstants<double>::twoPi * 80.0 / osRate));
 
         cached = {};
         cached.channel = -1;
@@ -60,6 +61,7 @@ public:
             f->reset();
         gridEnvelope = {};
         lastOutput = 0.0f;
+        transformerLow = 0.0f;
         toneStack.reset();
 
         for (int s = 0; s < maxStages; ++s)
@@ -147,7 +149,7 @@ public:
                 // Both only steer the operating point (the next coupling cap removes any DC error), so
                 // cheap rational forms replace two tanh per stage and sample.
                 const float bias = v.bias - pw.gridBlocking * env / (1.0f + env); // bounded shift
-                s = std::tanh (in + bias) - bias * (27.0f + bias * bias) / (27.0f + 9.0f * bias * bias);
+                s = std::tanh (in + bias) - softLimit (bias);
                 s = stageLowPass[(size_t) st] (stageHighPass[(size_t) st] (s));
             }
 
@@ -159,7 +161,12 @@ public:
             const float pd = powerDrive.getNextValue();
             const float fed = pw.feedback * feedbackDepth (feedbackPresence (lastOutput));
             const float e = s * pd / (1.0f + v.sag * sagEnvelope) - fed;
-            const float y = std::tanh (e + pw.asymmetry) - asymmetryOffset;
+            const float tube = std::tanh (e + pw.asymmetry) - asymmetryOffset;
+
+            // Output transformer: core flux is the integral of the voltage, so the lows saturate first.
+            // The band below ~80 Hz is softly limited and recombined; it sits inside the loop like the real one.
+            transformerLow += transformerCoeff * (tube - transformerLow);
+            const float y = tube - transformerLow + softLimit (transformerLow * transformerDrive) / transformerDrive;
             lastOutput = y;
 
             const float level = std::abs (y);
@@ -232,6 +239,7 @@ private:
         // Speaker load: the less feedback, the more the cabinet's 100 Hz resonance and voice-coil rise show.
         const auto& pw = power[(size_t) channel];
         speakerResonance.set (ArrayCoeffs::makePeakFilter (osRate, 100.0, 1.4, dbToGain ((1.0f - pw.feedback) * 6.0f)));
+        transformerDrive = 0.6f + 1.6f * (1.0f - pw.feedback); // feedback also linearises the transformer
         speakerInductance.set (ArrayCoeffs::makeHighShelf (osRate, 2500.0, 0.7, dbToGain ((1.0f - pw.feedback) * 3.0f)));
 
         // Circuit family of the tone stack, then the model's own fixed mid voicing on top.
@@ -276,6 +284,14 @@ private:
     Biquad feedbackPresence, feedbackDepth, speakerResonance, speakerInductance;
     std::array<float, maxStages> gridEnvelope {};
     float gridAttack = 0.0f, gridRelease = 0.0f, lastOutput = 0.0f;
+    float transformerCoeff = 0.0f, transformerDrive = 1.0f, transformerLow = 0.0f;
+
+    // tanh-like Pade approximation, exact at the clamp points; cheap enough for per-sample use.
+    static float softLimit (float x) noexcept
+    {
+        x = juce::jlimit (-3.0f, 3.0f, x);
+        return x * (27.0f + x * x) / (27.0f + 9.0f * x * x);
+    }
 
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> stageGain { 1.0f }, powerDrive { 1.0f };
     float sagAttack = 0.0f, sagRelease = 0.0f, sagEnvelope = 0.0f;

@@ -6,11 +6,17 @@ Su concepto es el de un "rig completo" en un solo plugin, con DSP, nombre e inte
 ## Cadena de señal
 
 ```
-Input → [Afinador] → Gate → Comp → Submerge (octavador) → Drive (5 tipos) → POMAN Amplifier (4x)
-      → Hull (cabina: modelo 4x12 o IR) → Graphic EQ → Harmonizer → Mod (chorus/flanger/tremolo) → Echolocation (delay ping-pong) → Trench (reverb) → Output
+Input → [Afinador] → Gate (detección) → Comp → Wah → Octavador → Drive (5 tipos) → POMAN Amplifier (4x) → Gate (corte)
+      → Cabina (modelo 4x12 o IR) → Graphic EQ → Volumen (pedal) → Harmonizer → Mod (chorus/flanger/tremolo) → Delay ping-pong → Reverb → Output
 ```
 
-- **Gate**: puerta con histéresis y hold, pensada para palm mutes cerrados.
+- **Gate**: detecta en la DI limpia (con filtro paso alto para que el zumbido de red no la mantenga abierta) y atenúa
+  después del amplificador, alineada con su latencia y abriendo 1 ms antes, así que elimina también el ruido del amplificador
+  sin comerse el ataque. Un detector de parada (envolvente rápida frente a lenta) cierra en ~45 ms cuando se apagan las cuerdas
+  y deja decaer las notas largas (~190 ms).
+- **Wah**: filtro de estado variable TPT, barrido logarítmico 400 Hz-2,2 kHz, resonancia, modo Auto (envolvente). La posición
+  se suaviza (sin zipper con un pedal de expresión MIDI a 100 Hz); con PEDAL ON el pedal enciende el wah y el talón lo apaga.
+  **Volumen**: pedal de volumen con curva de audio antes de los efectos de tiempo.
 - **Submerge**: octava abajo con divisor flip-flop y octava arriba con rectificador de onda completa.
 - **Comp**: compresor feed-forward con rodilla suave de 6 dB, sustain (umbral + ratio), ataque, nivel y mezcla en paralelo.
 - **Drive** (5 tipos, 16x oversampling; Distortion y Fuzz con ADAA de primer orden): Mid Boost (joroba de medios, aprieta graves), Blues Drive (transparente con mezcla limpia),
@@ -21,13 +27,19 @@ Input → [Afinador] → Gate → Comp → Submerge (octavador) → Drive (5 tip
   stack de tonos pasivo modelado del circuito (ecuación de Yeh y Smith, DAFx 2006, con valores Fender o Marshall según el
   modelo), voz de medios propia y sag. La etapa de potencia tiene realimentación negativa global con PRESENCE y DEPTH dentro
   del lazo (cantidad propia de cada modelo; el Chime no tiene), interacción con el altavoz cuando la realimentación es baja
-  y una ligera asimetría push-pull; el preamplificador simula la conducción de rejilla en los ataques fuertes. Las etapas no lineales van a 4x oversampling.
+  y una ligera asimetría push-pull, y un transformador de salida cuyo núcleo satura antes los graves; el preamplificador
+  simula la conducción de rejilla en los ataques fuertes. Las etapas no lineales van a 4x oversampling.
 - **NAM Capture**: carga capturas de [Neural Amp Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore) (`.nam`, WaveNet/LSTM/A2)
   como amplificador. Se cargan y precalientan en el hilo de la interfaz y se intercambian con un try-lock; corren a su
   frecuencia de entrenamiento con remuestreo sinc (≈207 muestras de latencia a 44,1 kHz, 0 a 48 kHz) y se normalizan a
   -18 dB cuando publican su sonoridad. La latencia reportada es constante: el camino más corto se retrasa.
 - **Cabinet**: dos IR (A/B) con mezcla de potencia constante y alineación de fase automática por correlación cruzada,
-  low/high cut, o el modelo 4x12 integrado. Incluye 4 IR sintéticos generados por `Tools/IrGen.cpp`.
+  low/high cut, o el modelo 4x12 integrado. `Tools/IrGen.cpp` genera 20 IR sintéticas propias: 4 cajas (altavoz con
+  resonancia y rizado de rotura del cono, caja cerrada o abierta) × 5 tomas (dinámico en centro/borde/cono, cinta en el
+  borde, condensador a 60 cm con reflexión del suelo). Los botones < > recorren las IR de la carpeta.
+- **Reverb**: red de retardos realimentada (FDN) de 8 líneas con matriz de Hadamard, difusión de entrada, pre-delay,
+  amortiguación de agudos por línea y modulación lenta; tipos Room (con reflexiones tempranas), Plate y Hall, y TONE.
+  Al apagar delay o reverb (o cambiar a un preset sin ellos) sus colas se apagan solas.
 
 - **Harmonizer**: 2 voces panoramizadas. En modo *Diatonic* sigue el tono de la señal DI limpia (YIN)
   y calcula cada intervalo por grados de la escala elegida (8 escalas, 12 tonalidades); en *Chromatic* usa
@@ -56,7 +68,10 @@ muestras perdidas se cuentan y se avisa.
 
 ## Looper (standalone)
 
-Página **LOOP**: grabar, cerrar, overdub, stop, undo/redo de la última capa y clear, hasta 60 s estéreo. El overdub
+Página **LOOP**: grabar, cerrar, overdub, stop, undo/redo de la última capa y clear, hasta 60 s estéreo. Con **SYNC**
+los loops se redondean a compases 4/4 enteros al tempo del estudio (cerrar tarde recorta manteniendo la fase; cerrar
+pronto sigue grabando hasta la barra) y, con el transporte en marcha, la grabación empieza en el siguiente tiempo y un
+loop parado vuelve a entrar en su propia rejilla. El overdub
 nunca copia el bucle entero en el hilo de audio: cada bloque de 1024 muestras lleva la generación que contiene y se
 fusiona con la base cuando una nueva capa lo toca; deshacer solo descarta una generación (instantáneo).
 
@@ -68,11 +83,22 @@ en el hilo de la interfaz (100 Hz), así que ni los parámetros ni los presets s
 
 ## Caja de ritmos (standalone)
 
-Página **DRUMS**: 8 voces sintetizadas (sin samples) en dos kits —*Studio* (modelado acústico con
-sala y compresión de bus) y *Electronic* (estilo 808)— y secuenciador de 16 pasos con acentos, swing y nivel por
-instrumento. El tiempo se calcula solo a partir de la posición del transporte del estudio y el BPM, nunca de los
+Página **DRUMS**: 8 voces y secuenciador de 16 pasos con acentos, swing y nivel por instrumento. Kits sintetizados
+*Studio*, *Rock*, *Metal* y *Vintage* (un mismo modelo acústico con afinación, amortiguación y ataque propios, sala y
+compresión de bus) y *Electronic* (estilo 808), más **Samples**: una carpeta de WAV/AIFF del usuario asignada por nombre de
+archivo (kick/bombo/BD, snare/caja/SD, hat/charles/HH, open/OHH, tom/floor/rack, crash/ride, clap). Con dos archivos de un
+instrumento, el más fuerte suena en los acentos; lo que falta lo toca la voz de Studio. Las muestras se convierten a la
+frecuencia del motor sin retraso y se intercambian con un try-lock (las voces del kit anterior se callan). POMAN no
+incluye muestras de terceros. El tiempo se calcula solo a partir de la posición del transporte del estudio y el BPM, nunca de los
 bloques de audio: suena idéntico con cualquier tamaño de buffer, tras un salto y en el render offline de EXPORT MIX
 (lo verifica una prueba). Se mezcla después del grabador, así que no entra en las tomas de guitarra.
+
+## Directo e idioma (standalone)
+
+Página **LIVE/DIRECTO**: preset en grande con < > grandes, pulsadores DRIVE/WAH/MOD/DELAY/REVERB/TAP/AFINADOR (MIDI learn
+con clic derecho), rejilla de presets por páginas y afinador grande. La interfaz está en español o inglés (botón ES/EN;
+la primera vez, el idioma de Windows): `Source/Localisation.h` tiene una sola tabla y traduce el árbol de componentes sin
+guardar estado por componente.
 
 ## Extras
 
@@ -105,11 +131,17 @@ build/POMANDspTests_artefacts/Release/POMANDspTests.exe  # amps/drives, harmoniz
 build/POMANDrumAnalysis_artefacts/Release/POMANDrumAnalysis.exe previews/drums  # mide cada voz y genera WAV
 build/POMANBench_artefacts/Release/POMANBench.exe            # CPU y aliasing por módulo
 build/POMANAmpFeel_artefacts/Release/POMANAmpFeel.exe --check  # dinámica: limpieza al tocar suave, ataque, presence/depth, estabilidad
+powershell -ExecutionPolicy Bypass -File Tools/run_tests.ps1   # todas las suites de una vez (lo usa la CI)
+powershell -ExecutionPolicy Bypass -File Tools/pluginval.ps1   # valida el VST3 con pluginval (lo descarga la primera vez)
+powershell -ExecutionPolicy Bypass -File Tools/sign.ps1 -Thumbprint <SHA1>  # firma exe y VST3 con tu certificado
 build/POMANNamTests_artefacts/Release/POMANNamTests.exe external/NeuralAmpModelerCore/example_models  # NAM
 python Tests/check_presets.py                                 # IDs de los presets de fábrica
 build/POMANMidiTests_artefacts/Release/POMANMidiTests.exe    # MIDI learn, footswitch, PC, ráfagas
 build/POMANRecorderTests_artefacts/Release/POMANRecorderTests.exe  # grabación, latencia, mute/solo, overdub, export, metrónomo, cuenta atrás, sesiones
 ```
+
+`.github/workflows/build.yml` hace lo mismo en GitHub Actions (Windows, VS 2022): dependencias fijadas, compilación,
+todas las pruebas, pluginval con rigor 5 y empaquetado como artefactos.
 
 Licencias de terceros: ver [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 

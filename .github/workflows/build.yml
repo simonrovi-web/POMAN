@@ -1,0 +1,61 @@
+# Builds POMAN on Windows, runs every test suite, validates the VST3 with pluginval and uploads the
+# standalone, the plugin and the portable folder as artifacts.
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencies (pinned)
+        shell: bash
+        run: |
+          git clone --depth 1 --branch 8.0.15 https://github.com/juce-framework/JUCE.git external/JUCE
+          git clone --depth 1 --branch v0.6.0 --recurse-submodules --shallow-submodules https://github.com/sdatkinson/NeuralAmpModelerCore.git external/NeuralAmpModelerCore
+
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Tests
+        shell: pwsh
+        run: ./Tools/run_tests.ps1
+
+      - name: pluginval (strictness 5)
+        shell: pwsh
+        run: ./Tools/pluginval.ps1 -Strictness 5
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out/POMAN | Out-Null
+          Copy-Item build/POMAN_artefacts/Release/Standalone/POMAN.exe out/POMAN/
+          Copy-Item build/POMAN_artefacts/Release/VST3/POMAN.vst3 out/POMAN/ -Recurse
+          Copy-Item THIRD_PARTY_NOTICES.md out/POMAN/
+          Copy-Item portable/POMAN-Portable out/POMAN-Portable -Recurse
+          Copy-Item build/POMAN_artefacts/Release/Standalone/POMAN.exe out/POMAN-Portable/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: POMAN-win64
+          path: out/POMAN
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: POMAN-Portable-win64
+          path: out/POMAN-Portable
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pluginval-logs
+          path: build/pluginval-logs

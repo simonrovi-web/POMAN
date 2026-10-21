@@ -1,8 +1,48 @@
-POMAN - Guitar Amp Suite (version portable 0.12.3)
+POMAN - Guitar Amp Suite (version portable 0.13.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.13.0
+- Idioma: la interfaz esta en espanol o ingles (boton ES/EN junto al logo).
+  La primera vez usa el idioma de Windows; la eleccion se guarda en
+  POMAN.language, junto al exe.
+- Pagina DIRECTO (LIVE) para tocar en vivo: nombre del preset en grande,
+  botones < > grandes, pulsadores DRIVE/WAH/MOD/DELAY/REVERB/TAP/AFINADOR,
+  rejilla de presets por paginas y afinador en grande. Clic derecho en un
+  pulsador para asignarle un pulsador MIDI.
+- Cambio de preset sin cortes: si el preset nuevo no tiene delay o reverb,
+  las repeticiones y la cola del anterior se apagan solas (no se cortan).
+- WAH (nuevo pedal): barrido de 400 Hz a 2,2 kHz, RESO y modo Auto
+  (auto-wah por la pua). Asigna un pedal de expresion a POSICION con clic
+  derecho: con PEDAL ON, al mover el pedal el wah se enciende y al dejarlo
+  en el talon medio segundo se apaga. VOLUMEN funciona como pedal de
+  volumen (las colas de delay y reverb siguen sonando al bajarlo).
+- Reverb de estudio nueva (Room, Plate, Hall) con control TONE. Mantiene
+  el equilibrio seco/efecto de los presets. Nota: la reverb anterior subia
+  el volumen unos 5 dB al activarla; la nueva no, asi que los presets con
+  reverb pueden sonar algo mas bajos que antes (sube OUTPUT si lo prefieres).
+- Puerta de ruido nueva: escucha la guitarra limpia y corta despues del
+  amplificador, asi que tambien elimina el soplido del amplificador. No
+  se come el ataque, cierra rapido al apagar las cuerdas y deja decaer las
+  notas largas. El umbral significa lo mismo que antes.
+- Transformador de salida modelado: a volumen alto los graves se comprimen
+  un poco, mas en los amplificadores con poca realimentacion.
+- Cajas: 20 IR nuevas en la carpeta IRs (4 cajas x microfono dinamico en
+  centro/borde/cono, de cinta y condensador a distancia), todas sinteticas
+  y propias. Los botones < > de CAJA recorren las IR de la carpeta.
+- Looper: boton SYNC. Los loops se ajustan a compases enteros al tempo de
+  la bateria; con la bateria en marcha la grabacion empieza en el
+  siguiente tiempo y el loop queda enganchado a ella.
+- Bateria: kits nuevos Rock, Metal y Vintage, y kits de muestras propios:
+  CARGAR KIT carga una carpeta de WAV (kick/bombo, snare/caja, hat/charles,
+  tom, crash...: se reconocen por el nombre del archivo). Si hay dos
+  archivos de un instrumento, el mas fuerte suena en los acentos. Sirve
+  cualquier kit gratuito cuya licencia permita usar sus muestras; POMAN
+  no incluye muestras de terceros (por ejemplo, las de MT Power DrumKit no
+  se pueden redistribuir, pero puedes exportar sus golpes desde tu DAW y
+  cargarlos con CARGAR KIT).
 
 Novedades 0.12.3
 - Etapa de potencia nueva en los amplificadores modelados:
