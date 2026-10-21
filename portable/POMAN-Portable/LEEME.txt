@@ -1,8 +1,23 @@
-POMAN - Guitar Amp Suite (version portable 0.12.2)
+POMAN - Guitar Amp Suite (version portable 0.12.3)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.12.3
+- Etapa de potencia nueva en los amplificadores modelados:
+  * Realimentacion negativa global con PRESENCE y DEPTH dentro del lazo,
+    como en los amplificadores reales: actuan mas cuanto mas trabaja la
+    etapa de potencia. El Chime Class A no tiene realimentacion (como los
+    clase A de verdad) y Tight Djent tiene la mas alta (mas apretado).
+  * Interaccion con el altavoz: en los modelos con poca realimentacion se
+    nota la resonancia de graves de la caja y el brillo de la bobina.
+  * Ligera asimetria del par de valvulas de salida (armonicos pares).
+- Respuesta al ataque: en una pua fuerte el preamplificador "se comprime"
+  un instante y luego se abre (conduccion de rejilla), sobre todo en los
+  modelos britanicos y el Chime. Tocar suave sigue limpiando el sonido.
+- El volumen de cada modelo es el mismo que en la 0.12.2. Consume algo mas
+  de CPU (entre 0,5 y 1,3 % de un nucleo mas por amplificador).
 
 Novedades 0.12.2
 - Controles de tono BASS / MID / TREBLE de los amplificadores modelados como

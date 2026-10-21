@@ -19,7 +19,9 @@ Input → [Afinador] → Gate → Comp → Submerge (octavador) → Drive (5 tip
   Hot Rod Lead, Hi-Gain Rect, Tight Djent, Lead 51 (alta ganancia estilo 5150, 5 etapas) y Cali Lead (lead californiano
   tipo Mark, 5 etapas, pensado para el EQ en V). NAM Capture ocupa siempre el índice 10 de la lista; los modelos nuevos van detrás. Cada modelo define etapas de preamp (2-4), filtros de acoplo,
   stack de tonos pasivo modelado del circuito (ecuación de Yeh y Smith, DAFx 2006, con valores Fender o Marshall según el
-  modelo), voz de medios propia, sag y presencia. Las etapas no lineales van a 4x oversampling.
+  modelo), voz de medios propia y sag. La etapa de potencia tiene realimentación negativa global con PRESENCE y DEPTH dentro
+  del lazo (cantidad propia de cada modelo; el Chime no tiene), interacción con el altavoz cuando la realimentación es baja
+  y una ligera asimetría push-pull; el preamplificador simula la conducción de rejilla en los ataques fuertes. Las etapas no lineales van a 4x oversampling.
 - **NAM Capture**: carga capturas de [Neural Amp Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore) (`.nam`, WaveNet/LSTM/A2)
   como amplificador. Se cargan y precalientan en el hilo de la interfaz y se intercambian con un try-lock; corren a su
   frecuencia de entrenamiento con remuestreo sinc (≈207 muestras de latencia a 44,1 kHz, 0 a 48 kHz) y se normalizan a
@@ -102,6 +104,7 @@ build/POMANTests_artefacts/Release/POMANTests.exe        # precisión del afinad
 build/POMANDspTests_artefacts/Release/POMANDspTests.exe  # amps/drives, harmonizer, EQ, mod y caja de ritmos
 build/POMANDrumAnalysis_artefacts/Release/POMANDrumAnalysis.exe previews/drums  # mide cada voz y genera WAV
 build/POMANBench_artefacts/Release/POMANBench.exe            # CPU y aliasing por módulo
+build/POMANAmpFeel_artefacts/Release/POMANAmpFeel.exe --check  # dinámica: limpieza al tocar suave, ataque, presence/depth, estabilidad
 build/POMANNamTests_artefacts/Release/POMANNamTests.exe external/NeuralAmpModelerCore/example_models  # NAM
 python Tests/check_presets.py                                 # IDs de los presets de fábrica
 build/POMANMidiTests_artefacts/Release/POMANMidiTests.exe    # MIDI learn, footswitch, PC, ráfagas

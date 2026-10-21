@@ -40,6 +40,8 @@ public:
         powerDrive.reset (osRate, 0.05);
         sagAttack = onePoleCoeff (osRate, 4.0f);
         sagRelease = onePoleCoeff (osRate, 120.0f);
+        gridAttack = onePoleCoeff (osRate, 1.0f);
+        gridRelease = onePoleCoeff (osRate, 35.0f);
 
         cached = {};
         cached.channel = -1;
@@ -53,8 +55,11 @@ public:
         if (oversampling != nullptr)
             oversampling->reset();
 
-        for (auto* f : { &inputHighPass, &preShape, &bright, &voiceFilter, &presenceFilter, &depthFilter })
+        for (auto* f : { &inputHighPass, &preShape, &bright, &voiceFilter, &presenceFilter, &depthFilter,
+                         &feedbackPresence, &feedbackDepth, &speakerResonance, &speakerInductance })
             f->reset();
+        gridEnvelope = {};
+        lastOutput = 0.0f;
         toneStack.reset();
 
         for (int s = 0; s < maxStages; ++s)
@@ -92,10 +97,19 @@ public:
 
         // BASS / MID / TREBLE drive the passive tone stack between preamp and power amp, as in the amps.
         toneStack.setKnobs (osRate, params.treble, params.mid, params.bass);
+        // PRESENCE / DEPTH mainly take treble / bass out of the negative feedback (as on the amps), so their
+        // effect depends on the model's feedback and on how hard the power stage works. A gentle post shelf
+        // keeps them useful on models without feedback (Chime Class A).
         if (force || params.presence != cached.presence)
-            presenceFilter.set (ArrayCoeffs::makeHighShelf (sampleRate, v.presenceHz, 0.7f, dbToGain (knobToDb (params.presence, 8.0f))));
+        {
+            feedbackPresence.set (ArrayCoeffs::makeHighShelf (osRate, 3500.0, 0.7, dbToGain (-1.8f * params.presence)));
+            presenceFilter.set (ArrayCoeffs::makeHighShelf (sampleRate, v.presenceHz, 0.7f, dbToGain (knobToDb (params.presence, 4.0f))));
+        }
         if (force || params.depth != cached.depth)
-            depthFilter.set (ArrayCoeffs::makePeakFilter (sampleRate, 85.0f, 1.0f, dbToGain (knobToDb (params.depth, 8.0f))));
+        {
+            feedbackDepth.set (ArrayCoeffs::makeLowShelf (osRate, 90.0, 0.7, dbToGain (-1.8f * params.depth)));
+            depthFilter.set (ArrayCoeffs::makePeakFilter (sampleRate, 85.0f, 1.0f, dbToGain (knobToDb (params.depth, 4.0f))));
+        }
 
         cached = params;
     }
@@ -113,7 +127,9 @@ public:
         const auto numUp = (int) upBlock.getNumSamples();
 
         const auto& v = voicings[(size_t) voicingChannel];
-        const float biasOffset = std::tanh (v.bias);
+        const auto& pw = power[(size_t) voicingChannel];
+        const float asymmetryOffset = std::tanh (pw.asymmetry);
+        const float outputScale = 0.4f * (1.0f + pw.feedback) * dbToGain (pw.levelDb);
 
         for (int i = 0; i < numUp; ++i)
         {
@@ -122,19 +138,34 @@ public:
 
             for (int st = 0; st < v.stages; ++st)
             {
-                s = std::tanh (s * g + v.bias) - biasOffset;
+                // Grid conduction: hard peaks charge the coupling cap and push the stage colder for a few
+                // tens of ms, so a hard pick is squashed and then blooms back (the tube "push-back").
+                const float in = s * g;
+                const float conduction = juce::jmax (0.0f, in - 0.6f);
+                auto& env = gridEnvelope[(size_t) st];
+                env = conduction + (conduction > env ? gridAttack : gridRelease) * (env - conduction);
+                // Both only steer the operating point (the next coupling cap removes any DC error), so
+                // cheap rational forms replace two tanh per stage and sample.
+                const float bias = v.bias - pw.gridBlocking * env / (1.0f + env); // bounded shift
+                s = std::tanh (in + bias) - bias * (27.0f + bias * bias) / (27.0f + 9.0f * bias * bias);
                 s = stageLowPass[(size_t) st] (stageHighPass[(size_t) st] (s));
             }
 
             s = voiceFilter (toneStack (s * v.outputTrim));
 
+            // Power stage: slightly asymmetric output pair inside a global negative-feedback loop (one
+            // oversampled sample of loop delay; stable because loop gain = feedback * tanh' < 1), with
+            // supply sag. Less feedback lets the speaker's impedance curve show through, as on real amps.
             const float pd = powerDrive.getNextValue();
-            const float p = s * pd;
-            const float level = std::abs (p);
-            const float sagCoeff = level > sagEnvelope ? sagAttack : sagRelease;
-            sagEnvelope = level + sagCoeff * (sagEnvelope - level);
+            const float fed = pw.feedback * feedbackDepth (feedbackPresence (lastOutput));
+            const float e = s * pd / (1.0f + v.sag * sagEnvelope) - fed;
+            const float y = std::tanh (e + pw.asymmetry) - asymmetryOffset;
+            lastOutput = y;
 
-            d[i] = std::tanh (p / (1.0f + v.sag * sagEnvelope)) / std::tanh (pd) * 0.4f;
+            const float level = std::abs (y);
+            sagEnvelope = level + (level > sagEnvelope ? sagAttack : sagRelease) * (sagEnvelope - level);
+
+            d[i] = speakerInductance (speakerResonance (y)) * outputScale / std::tanh (pd);
         }
 
         oversampling->processSamplesDown (block);
@@ -198,6 +229,11 @@ private:
             stageLowPass[(size_t) s].set (ArrayCoeffs::makeLowPass (osRate, v.millerHz, 0.6f));
         }
 
+        // Speaker load: the less feedback, the more the cabinet's 100 Hz resonance and voice-coil rise show.
+        const auto& pw = power[(size_t) channel];
+        speakerResonance.set (ArrayCoeffs::makePeakFilter (osRate, 100.0, 1.4, dbToGain ((1.0f - pw.feedback) * 6.0f)));
+        speakerInductance.set (ArrayCoeffs::makeHighShelf (osRate, 2500.0, 0.7, dbToGain ((1.0f - pw.feedback) * 3.0f)));
+
         // Circuit family of the tone stack, then the model's own fixed mid voicing on top.
         toneStack.setComponents (fenderStack[(size_t) channel] ? ToneStack::fender : ToneStack::marshall);
         voiceFilter.set (ArrayCoeffs::makePeakFilter (osRate, v.midHz, v.midQ, dbToGain (v.midOffsetDb)));
@@ -217,8 +253,29 @@ private:
 
     Biquad inputHighPass, preShape, bright;
     std::array<Biquad, maxStages> stageHighPass, stageLowPass;
+    // Power section and dynamics per model: global feedback (0 = none, like a class-A AC-style amp),
+    // output-pair asymmetry (even harmonics), how strongly hard picks bias the preamp colder, and the
+    // output trim that keeps each model at its previous level (measured at gain 6, master 5).
+    struct Power { float feedback, asymmetry, gridBlocking, levelDb; };
+    static constexpr std::array<Power, 11> power { {
+        { 0.50f, 0.05f, 0.15f, -3.7f }, // Glass Clean
+        { 0.50f, 0.04f, 0.15f, -3.2f }, // Modern Rhythm
+        { 0.45f, 0.04f, 0.20f, -3.4f }, // Modern Lead
+        { 0.55f, 0.05f, 0.15f, -4.0f }, // US Clean
+        { 0.00f, 0.08f, 0.30f, -4.0f }, // Chime Class A: no feedback, lots of interaction
+        { 0.35f, 0.07f, 0.30f, -3.8f }, // Brit Crunch
+        { 0.40f, 0.05f, 0.25f, -3.3f }, // Hot Rod Lead
+        { 0.45f, 0.05f, 0.25f, -4.0f }, // Hi-Gain Rect
+        { 0.60f, 0.03f, 0.05f, -2.3f }, // Tight Djent: tight, fast, little push-back
+        { 0.50f, 0.04f, 0.15f, -2.7f }, // Lead 51
+        { 0.50f, 0.04f, 0.10f, -2.5f }, // Cali Lead
+    } };
+
     ToneStack toneStack;
     Biquad voiceFilter, presenceFilter, depthFilter;
+    Biquad feedbackPresence, feedbackDepth, speakerResonance, speakerInductance;
+    std::array<float, maxStages> gridEnvelope {};
+    float gridAttack = 0.0f, gridRelease = 0.0f, lastOutput = 0.0f;
 
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> stageGain { 1.0f }, powerDrive { 1.0f };
     float sagAttack = 0.0f, sagRelease = 0.0f, sagEnvelope = 0.0f;

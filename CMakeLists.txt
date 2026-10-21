@@ -1,6 +1,6 @@
 ﻿cmake_minimum_required(VERSION 3.22)
 
-project(POMAN VERSION 0.12.2 LANGUAGES C CXX)
+project(POMAN VERSION 0.12.3 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -126,3 +126,10 @@ target_sources(POMANMidiTests PRIVATE Tests/MidiTest.cpp)
 target_include_directories(POMANMidiTests PRIVATE Source)
 target_compile_definitions(POMANMidiTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(POMANMidiTests PRIVATE juce::juce_audio_basics juce::juce_data_structures PUBLIC juce::juce_recommended_config_flags)
+
+# Dynamics/feel measurements per amp model: POMANAmpFeel [--check]
+juce_add_console_app(POMANAmpFeel PRODUCT_NAME "POMANAmpFeel")
+target_sources(POMANAmpFeel PRIVATE Tests/AmpFeel.cpp)
+target_include_directories(POMANAmpFeel PRIVATE Source)
+target_compile_definitions(POMANAmpFeel PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(POMANAmpFeel PRIVATE juce::juce_dsp PUBLIC juce::juce_recommended_config_flags juce::juce_recommended_lto_flags)
