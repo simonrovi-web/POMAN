@@ -1,8 +1,24 @@
-POMAN - Guitar Amp Suite (version portable 0.13.1)
+POMAN - Guitar Amp Suite (version portable 0.14.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.14.0
+- Valvulas modeladas por fisica en todos los amplificadores:
+  * Preamplificador: cada etapa es un triodo 12AX7 (ecuaciones de Koren)
+    con su carga de placa, su punto de trabajo y la corriente de rejilla.
+    Cada etapa invierte la fase, como en un amplificador real.
+  * Etapa de potencia: par push-pull de EL34, 6L6, EL84 o 6V6 segun el
+    modelo, en clase AB (con un poco de distorsion de cruce) o clase A.
+  El volumen de cada modelo es el mismo que antes y consume algo MENOS
+  de CPU que la version anterior.
+- 5 amplificadores clasicos nuevos (nombres genericos, sonido propio):
+  Tweed Deluxe (6V6, rompe muy pronto), Plexi 50 (EL34, britanico sin
+  master), Bassman 4x10 (6L6, blues), Smooth Overdrive (overdrive
+  boutique muy dinamico) y Brit 80s Lead (EL34, lead de los 80).
+- 5 presets nuevos: Tweed Breakup, Plexi Crunch, Blues Bassman, Smooth
+  Overdrive y 80s Brit Lead (40 en total).
 
 Novedades 0.13.1
 - Amplificador nuevo: Liquid Lead, para solos de estilo virtuoso: medios

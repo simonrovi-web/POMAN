@@ -2,6 +2,7 @@
 
 #include "DspCommon.h"
 #include "ToneStack.h"
+#include "Tubes.h"
 #include <memory>
 
 namespace poman
@@ -14,8 +15,9 @@ struct AmpParams
     float presence = 5.0f, depth = 5.0f, master = 5.0f;
 };
 
-// Amp with several voicings: cascaded asymmetric triode-like stages, a per-model tone stack and a
-// saggy power stage, all nonlinear parts running 4x oversampled.
+// Amp with several voicings: cascaded 12AX7 triode stages (Koren model, solved into tables), a passive
+// tone stack, and a push-pull power pair (EL34 / 6L6 / EL84 / 6V6) in a feedback loop with sag and an
+// output transformer; all nonlinear parts run 4x oversampled.
 class AmpModel
 {
 public:
@@ -25,7 +27,8 @@ public:
     static juce::StringArray modelNames()
     {
         return { "Glass Clean", "Modern Rhythm", "Modern Lead", "US Clean", "Chime Class A",
-                 "Brit Crunch", "Hot Rod Lead", "Hi-Gain Rect", "Tight Djent", "Lead 51", "Cali Lead", "Liquid Lead" };
+                 "Brit Crunch", "Hot Rod Lead", "Hi-Gain Rect", "Tight Djent", "Lead 51", "Cali Lead", "Liquid Lead",
+                 "Tweed Deluxe", "Plexi 50", "Bassman 4x10", "Smooth Overdrive", "Brit 80s Lead" };
     }
 
     void prepare (double newSampleRate, int maxBlockSize)
@@ -43,6 +46,8 @@ public:
         gridAttack = onePoleCoeff (osRate, 1.0f);
         gridRelease = onePoleCoeff (osRate, 35.0f);
         transformerCoeff = (float) (1.0 - std::exp (-juce::MathConstants<double>::twoPi * 80.0 / osRate));
+        tubes::PreampTriode::table(); // solved once, here rather than on the audio thread
+        tubes::PushPull::table (tubes::PowerTube::el34);
 
         cached = {};
         cached.channel = -1;
@@ -130,8 +135,12 @@ public:
 
         const auto& v = voicings[(size_t) voicingChannel];
         const auto& pw = power[(size_t) voicingChannel];
-        const float asymmetryOffset = std::tanh (pw.asymmetry);
+        const auto& triode = tubes::PreampTriode::table();
+        const auto& pair = tubes::PushPull::table (powerTubes[(size_t) voicingChannel]);
+        const float asymmetryOffset = pair (pw.asymmetry);
         const float outputScale = 0.4f * (1.0f + pw.feedback) * dbToGain (pw.levelDb);
+        constexpr float voltsPerUnit = tubes::PreampTriode::voltsPerUnit;
+        const float blockingVolts = pw.gridBlocking * voltsPerUnit;
 
         for (int i = 0; i < numUp; ++i)
         {
@@ -140,16 +149,21 @@ public:
 
             for (int st = 0; st < v.stages; ++st)
             {
-                // Grid conduction: hard peaks charge the coupling cap and push the stage colder for a few
-                // tens of ms, so a hard pick is squashed and then blooms back (the tube "push-back").
-                const float in = s * g;
-                const float conduction = juce::jmax (0.0f, in - 0.6f);
+                // The stage's grid voltage: its operating point plus the coupled signal.
+                const float vin = stageBias + voltsPerUnit * (s * g);
+
+                // Grid conduction: when the grid goes positive it charges the coupling cap, which shifts
+                // the stage colder for a few tens of ms, so a hard pick is squashed and then blooms back.
+                const float conduction = juce::jmax (0.0f, vin);
                 auto& env = gridEnvelope[(size_t) st];
                 env = conduction + (conduction > env ? gridAttack : gridRelease) * (env - conduction);
-                // Both only steer the operating point (the next coupling cap removes any DC error), so
-                // cheap rational forms replace two tanh per stage and sample.
-                const float bias = v.bias - pw.gridBlocking * env / (1.0f + env); // bounded shift
-                s = std::tanh (in + bias) - softLimit (bias);
+                const float shift = blockingVolts * env / (1.0f + env); // bounded
+                const float operating = stageBias - shift;
+
+                // Plate swing from the operating point, scaled so the small-signal gain is one. Each
+                // common-cathode stage inverts, so the next one clips the other half of the wave first.
+                const float out = (triode (operating) - triode (vin - shift)) * stageNorm;
+                s = (st & 1) != 0 ? -out : out;
                 s = stageLowPass[(size_t) st] (stageHighPass[(size_t) st] (s));
             }
 
@@ -161,7 +175,7 @@ public:
             const float pd = powerDrive.getNextValue();
             const float fed = pw.feedback * feedbackDepth (feedbackPresence (lastOutput));
             const float e = s * pd / (1.0f + v.sag * sagEnvelope) - fed;
-            const float tube = std::tanh (e + pw.asymmetry) - asymmetryOffset;
+            const float tube = pair (e + pw.asymmetry) - asymmetryOffset; // push-pull pair, slightly unbalanced
 
             // Output transformer: core flux is the integral of the voltage, so the lows saturate first.
             // The band below ~80 Hz is softly limited and recombined; it sits inside the loop like the real one.
@@ -172,7 +186,7 @@ public:
             const float level = std::abs (y);
             sagEnvelope = level + (level > sagEnvelope ? sagAttack : sagRelease) * (sagEnvelope - level);
 
-            d[i] = speakerInductance (speakerResonance (y)) * outputScale / std::tanh (pd);
+            d[i] = speakerInductance (speakerResonance (y)) * outputScale / pair (pd);
         }
 
         oversampling->processSamplesDown (block);
@@ -195,7 +209,7 @@ private:
 
     // stages | in HP, pre-shape Hz/dB, bright dB | gain min/max, bias | coupling, miller, trim
     //        | mid Hz, mid Q, mid offset dB | sag, presence Hz
-    static constexpr std::array<Voicing, 12> voicings { {
+    static constexpr std::array<Voicing, 17> voicings { {
         // Glass Clean: two glassy stages, firm power amp.
         { 2, 50.0f, 800.0f, 0.0f, 4.0f, 1.5f, 8.0f, 0.06f, 25.0f, 12000.0f, 0.9f, 650.0f, 0.9f, 0.0f, 0.3f, 4500.0f },
         // Modern Rhythm: tight, scooped-ready crunch.
@@ -223,6 +237,20 @@ private:
         // Liquid Lead: virtuoso lead voice. Four stages with a firm low end and a vocal 1.2 kHz push
         // before the clipping, a soft top (no fizz) and a little sag so long notes breathe and sing.
         { 4, 100.0f, 1200.0f, 5.0f, 1.5f, 12.0f, 700.0f, 0.12f, 60.0f, 6800.0f, 0.6f, 1100.0f, 0.8f, 2.0f, 0.35f, 4300.0f },
+        // Tweed Deluxe: small '50s combo. Two stages, warm mid hump, early and very touch-sensitive
+        // breakup, big sag from the tube rectifier; the 6V6 pair runs without feedback.
+        { 2, 60.0f, 700.0f, 3.0f, 2.0f, 3.0f, 40.0f, 0.10f, 20.0f, 9000.0f, 0.9f, 800.0f, 0.7f, 2.0f, 0.7f, 3500.0f },
+        // Plexi 50: British non-master-volume head. Bright cap, 1 kHz bark, crunch that comes from
+        // turning it up; EL34s with light feedback.
+        { 3, 80.0f, 1200.0f, 3.0f, 4.0f, 2.5f, 40.0f, 0.08f, 35.0f, 9000.0f, 0.8f, 1000.0f, 0.8f, 1.5f, 0.4f, 4000.0f },
+        // Bassman 4x10: tweed bass amp that became a blues-rock classic. Fat lows, smooth breakup, 6L6s.
+        { 2, 50.0f, 600.0f, 2.0f, 2.0f, 2.5f, 30.0f, 0.08f, 20.0f, 10000.0f, 0.9f, 700.0f, 0.7f, 1.0f, 0.5f, 4500.0f },
+        // Smooth Overdrive: boutique overdrive-channel style. A clean preamp feeding cascaded drive
+        // stages, thick 700 Hz mids, silky top and little sag, so it follows the pick closely.
+        { 4, 85.0f, 700.0f, 4.0f, 1.0f, 8.0f, 300.0f, 0.10f, 40.0f, 6000.0f, 0.65f, 700.0f, 0.8f, 2.5f, 0.3f, 4000.0f },
+        // Brit 80s Lead: master-volume British lead of the '80s. A cold-biased clipping stage, gritty
+        // 1.6 kHz upper mids, bright and tight; EL34s.
+        { 3, 100.0f, 1600.0f, 4.0f, 3.0f, 8.0f, 250.0f, 0.22f, 50.0f, 8000.0f, 0.7f, 900.0f, 0.9f, 1.0f, 0.3f, 4300.0f },
     } };
 
     void applyVoicing (int channel)
@@ -245,14 +273,29 @@ private:
         transformerDrive = 0.6f + 1.6f * (1.0f - pw.feedback); // feedback also linearises the transformer
         speakerInductance.set (ArrayCoeffs::makeHighShelf (osRate, 2500.0, 0.7, dbToGain ((1.0f - pw.feedback) * 3.0f)));
 
+        // Preamp operating point (volts) and the gain normalisation at that point.
+        stageBias = tubes::PreampTriode::operatingPoint (v.bias);
+        const auto& triode = tubes::PreampTriode::table();
+        stageNorm = 1.0f / ((triode (stageBias - 0.05f) - triode (stageBias + 0.05f)) / 0.1f * tubes::PreampTriode::voltsPerUnit);
+
         // Circuit family of the tone stack, then the model's own fixed mid voicing on top.
         toneStack.setComponents (fenderStack[(size_t) channel] ? ToneStack::fender : ToneStack::marshall);
         voiceFilter.set (ArrayCoeffs::makePeakFilter (osRate, v.midHz, v.midQ, dbToGain (v.midOffsetDb)));
     }
 
     // Which models use the Fender-family stack (the Mark-style stack derives from it); the rest are Marshall-style.
-    static constexpr std::array<bool, 12> fenderStack { true,  false, false, true,  true, false,
-                                                        false, false, false, false, true,  false };
+    static constexpr std::array<bool, 17> fenderStack { true,  false, false, true,  true, false,
+                                                        false, false, false, false, true,  false,
+                                                        true,  false, true,  true,  false };
+
+    // Output tubes per model (EL84 / 6V6 pairs are cathode-biased class A, EL34 / 6L6 class AB).
+    static constexpr std::array<tubes::PowerTube, 17> powerTubes {
+        tubes::PowerTube::sixL6, tubes::PowerTube::sixL6, tubes::PowerTube::el34, tubes::PowerTube::sixL6, // Glass, Modern Rhythm, Modern Lead, US
+        tubes::PowerTube::el84,  tubes::PowerTube::el34,  tubes::PowerTube::el34, tubes::PowerTube::sixL6, // Chime, Brit, Hot Rod, Rect
+        tubes::PowerTube::sixL6, tubes::PowerTube::sixL6, tubes::PowerTube::sixL6, tubes::PowerTube::el34, // Djent, Lead 51, Cali, Liquid
+        tubes::PowerTube::sixV6, tubes::PowerTube::el34,  tubes::PowerTube::sixL6, tubes::PowerTube::sixL6, // Tweed, Plexi, Bassman, Smooth OD
+        tubes::PowerTube::el34,                                                                              // Brit 80s
+    };
 
     static constexpr size_t oversamplingOrder = 2;
 
@@ -268,19 +311,24 @@ private:
     // output-pair asymmetry (even harmonics), how strongly hard picks bias the preamp colder, and the
     // output trim that keeps each model at its previous level (measured at gain 6, master 5).
     struct Power { float feedback, asymmetry, gridBlocking, levelDb; };
-    static constexpr std::array<Power, 12> power { {
-        { 0.50f, 0.05f, 0.15f, -3.7f }, // Glass Clean
-        { 0.50f, 0.04f, 0.15f, -3.2f }, // Modern Rhythm
-        { 0.45f, 0.04f, 0.20f, -3.4f }, // Modern Lead
-        { 0.55f, 0.05f, 0.15f, -4.0f }, // US Clean
-        { 0.00f, 0.08f, 0.30f, -4.0f }, // Chime Class A: no feedback, lots of interaction
-        { 0.35f, 0.07f, 0.30f, -3.8f }, // Brit Crunch
-        { 0.40f, 0.05f, 0.25f, -3.3f }, // Hot Rod Lead
-        { 0.45f, 0.05f, 0.25f, -4.0f }, // Hi-Gain Rect
-        { 0.60f, 0.03f, 0.05f, -2.3f }, // Tight Djent: tight, fast, little push-back
-        { 0.50f, 0.04f, 0.15f, -2.7f }, // Lead 51
-        { 0.50f, 0.04f, 0.10f, -2.5f }, // Cali Lead
-        { 0.45f, 0.05f, 0.20f, -3.5f }, // Liquid Lead: some push-back on hard picks, then it blooms
+    static constexpr std::array<Power, 17> power { {
+        { 0.50f, 0.05f, 0.15f, -4.4f }, // Glass Clean
+        { 0.50f, 0.04f, 0.15f, -5.8f }, // Modern Rhythm
+        { 0.45f, 0.04f, 0.20f, -7.2f }, // Modern Lead
+        { 0.55f, 0.05f, 0.15f, -4.2f }, // US Clean
+        { 0.00f, 0.08f, 0.30f, -6.3f }, // Chime Class A: no feedback, lots of interaction
+        { 0.35f, 0.07f, 0.30f, -5.4f }, // Brit Crunch
+        { 0.40f, 0.05f, 0.25f, -6.7f }, // Hot Rod Lead
+        { 0.45f, 0.05f, 0.25f, -8.2f }, // Hi-Gain Rect
+        { 0.60f, 0.03f, 0.05f, -6.5f }, // Tight Djent: tight, fast, little push-back
+        { 0.50f, 0.04f, 0.15f, -7.7f }, // Lead 51
+        { 0.50f, 0.04f, 0.10f, -7.1f }, // Cali Lead
+        { 0.45f, 0.05f, 0.20f, -6.8f }, // Liquid Lead: some push-back on hard picks, then it blooms
+        { 0.00f, 0.07f, 0.30f, -6.4f }, // Tweed Deluxe: no feedback, lots of push-back
+        { 0.30f, 0.06f, 0.25f, -5.6f }, // Plexi 50
+        { 0.35f, 0.06f, 0.25f, -7.1f }, // Bassman 4x10
+        { 0.50f, 0.05f, 0.20f, -7.0f }, // Smooth Overdrive
+        { 0.40f, 0.05f, 0.25f, -6.9f }, // Brit 80s Lead
     } };
 
     ToneStack toneStack;
@@ -289,6 +337,7 @@ private:
     std::array<float, maxStages> gridEnvelope {};
     float gridAttack = 0.0f, gridRelease = 0.0f, lastOutput = 0.0f;
     float transformerCoeff = 0.0f, transformerDrive = 1.0f, transformerLow = 0.0f;
+    float stageBias = -1.5f, stageNorm = 1.0f; // preamp grid operating point (V) and 1 / (gain * volts per unit)
 
     // tanh-like Pade approximation, exact at the clamp points; cheap enough for per-sample use.
     static float softLimit (float x) noexcept

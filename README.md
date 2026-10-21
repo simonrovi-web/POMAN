@@ -21,12 +21,16 @@ Input → [Afinador] → Gate (detección) → Comp → Wah → Octavador → Dr
 - **Comp**: compresor feed-forward con rodilla suave de 6 dB, sustain (umbral + ratio), ataque, nivel y mezcla en paralelo.
 - **Drive** (5 tipos, 16x oversampling; Distortion y Fuzz con ADAA de primer orden): Mid Boost (joroba de medios, aprieta graves), Blues Drive (transparente con mezcla limpia),
   Distortion (recorte duro de op-amp), Fuzz (dos etapas, tono con medios recortados) y Treble Boost.
-- **POMAN Amplifier** (12 modelos): Glass Clean, Modern Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch,
+- **POMAN Amplifier** (17 modelos): Glass Clean, Modern Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch,
   Hot Rod Lead, Hi-Gain Rect, Tight Djent, Lead 51 (alta ganancia estilo 5150, 5 etapas) y Cali Lead (lead californiano
   tipo Mark, 5 etapas, pensado para el EQ en V) y Liquid Lead (lead virtuoso: 4 etapas, medios vocales a 1,2 kHz,
-  agudos suaves). NAM Capture ocupa siempre el índice 10 de la lista; los modelos nuevos van detrás. Cada modelo define etapas de preamp (2-4), filtros de acoplo,
+  agudos suaves), y los clásicos Tweed Deluxe (6V6, clase A sin realimentación), Plexi 50 (EL34), Bassman 4x10 (6L6),
+  Smooth Overdrive (boutique, 6L6) y Brit 80s Lead (EL34). NAM Capture ocupa siempre el índice 10 de la lista; los modelos nuevos van detrás. Cada modelo define etapas de preamp (2-4), filtros de acoplo,
   stack de tonos pasivo modelado del circuito (ecuación de Yeh y Smith, DAFx 2006, con valores Fender o Marshall según el
-  modelo), voz de medios propia y sag. La etapa de potencia tiene realimentación negativa global con PRESENCE y DEPTH dentro
+  modelo), voz de medios propia y sag. Las válvulas siguen las ecuaciones de Koren (`Source/dsp/Tubes.h`): cada etapa
+  de preamplificador es un 12AX7 con carga de 100 kΩ a 300 V, punto de trabajo propio de cada modelo y corriente de
+  rejilla, resuelto una vez en una tabla e interpolado; las etapas invierten la fase. La potencia es un par push-pull de
+  EL34, 6L6, EL84 o 6V6 (clase AB cerca del corte o clase A), normalizado a pendiente máxima 1 para que el lazo sea estable. La etapa de potencia tiene realimentación negativa global con PRESENCE y DEPTH dentro
   del lazo (cantidad propia de cada modelo; el Chime no tiene), interacción con el altavoz cuando la realimentación es baja
   y una ligera asimetría push-pull, y un transformador de salida cuyo núcleo satura antes los graves; el preamplificador
   simula la conducción de rejilla en los ataques fuertes. Las etapas no lineales van a 4x oversampling.
@@ -105,7 +109,7 @@ guardar estado por componente.
 
 - **Delay** sincronizable (figuras de 1/2 a 1/16, con puntillo y tresillo) al tempo del DAW o del estudio, con tap tempo.
 - **CAL**: calibración de entrada que lleva el pico de la DI a -9 dBFS.
-- **Presets**: 35 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
+- **Presets**: 40 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
 - **Afinador** YIN (31 Hz a 1,3 kHz) que silencia la salida mientras está abierto.
 - **Medidores** de entrada y salida con indicador de saturación.
 - **Audio**: ASIO y WASAPI de baja latencia; en el primer arranque elige la interfaz ASIO de hardware con el buffer más pequeño estable.

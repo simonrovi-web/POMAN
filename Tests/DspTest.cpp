@@ -1,5 +1,6 @@
 ﻿// Offline render of every amp model and drive type: checks for NaN/silence/runaway levels
 // and prints RMS so the models can be level-matched.
+#include "dsp/Tubes.h"
 #include "dsp/Wah.h"
 #include "dsp/NoiseGate.h"
 #include "dsp/Ambience.h"
@@ -1452,6 +1453,43 @@ int main()
         std::printf ("%s  %-24s loaded %d, accent/normal %.1f (two layers), 60 Hz crossing at %d (want %.0f), missing hat -> Studio %d, swap %d, saved %d\n",
                      ok ? "PASS" : "FAIL", "sample kit", loaded, accentPeak / juce::jmax (1.0e-6f, normalPeak), crossing, sampleRate / 120.0,
                      fallback, swapSafe, persisted);
+    }
+
+    std::printf ("-- Tube models (Koren) --\n");
+    {
+        using namespace poman::tubes;
+        // 12AX7, 100 k load, 300 V, -1.5 V bias: datasheet-like operating point and gain.
+        const double vp = PreampTriode::plateVoltage (-1.5);
+        const double gain = (PreampTriode::plateVoltage (-1.55) - PreampTriode::plateVoltage (-1.45)) / 0.1;
+        const double cutoffVp = PreampTriode::plateVoltage (-4.0);
+        const double clamp = PreampTriode::gridVoltage (3.0);
+        const auto& t = PreampTriode::table();
+        const double tableError = std::abs (t (-1.5f) - vp);
+        const bool triodeOk = vp > 170.0 && vp < 240.0 && gain > 45.0 && gain < 80.0 && cutoffVp > 295.0
+                           && clamp < 1.0 && tableError < 0.5;
+        failures += triodeOk ? 0 : 1;
+        std::printf ("%s  %-24s Vp %.0f V at -1.5 V, gain %.0f, cut off at -4 V (Vp %.0f V), +3 V in -> grid %.2f V\n",
+                     triodeOk ? "PASS" : "FAIL", "12AX7 stage", vp, gain, cutoffVp, clamp);
+
+        // Push-pull: odd-symmetric (even harmonics cancel), slope <= 1, class A smoother at low level.
+        bool ppOk = true;
+        juce::String line;
+        double crossover[4] {};
+        for (int k = 0; k < (int) PowerTube::count; ++k)
+        {
+            const auto& pp = PushPull::table ((PowerTube) k);
+            double asymmetry = 0.0;
+            for (float e = 0.05f; e < 3.0f; e += 0.05f)
+                asymmetry = std::max (asymmetry, (double) std::abs (pp (e) + pp (-e)));
+            // Low-level gain relative to the full-drive peak gain (crossover makes it smaller).
+            crossover[k] = (pp (0.02f) - pp (-0.02f)) / 0.04;
+            const double slope = pp.maxSlope();
+            ppOk = ppOk && asymmetry < 1.0e-3 && slope <= 1.0001 && pp (3.0f) > pp (1.0f);
+            line << juce::StringArray { "EL34", "6L6", "EL84", "6V6" }[k] << " " << juce::String (crossover[k], 2) << "  ";
+        }
+        ppOk = ppOk && crossover[(int) PowerTube::el84] > crossover[(int) PowerTube::sixL6];
+        failures += ppOk ? 0 : 1;
+        std::printf ("%s  %-24s symmetric, slope <= 1; small-signal gain: %s\n", ppOk ? "PASS" : "FAIL", "push-pull pairs", line.toRawUTF8());
     }
     return failures;
 }
