@@ -24,7 +24,7 @@ public:
     static juce::StringArray modelNames()
     {
         return { "Glass Clean", "Modern Rhythm", "Modern Lead", "US Clean", "Chime Class A",
-                 "Brit Crunch", "Hot Rod Lead", "Hi-Gain Rect", "Tight Djent", "Lead 51" };
+                 "Brit Crunch", "Hot Rod Lead", "Hi-Gain Rect", "Tight Djent", "Lead 51", "Cali Lead" };
     }
 
     void prepare (double newSampleRate, int maxBlockSize)
@@ -159,7 +159,7 @@ private:
 
     // stages | in HP, pre-shape Hz/dB, bright dB | gain min/max, bias | coupling, miller, trim
     //        | bass Hz, mid Hz, mid Q, treble Hz, mid offset dB | sag, presence Hz
-    static constexpr std::array<Voicing, 10> voicings { {
+    static constexpr std::array<Voicing, 11> voicings { {
         // Glass Clean: two glassy stages, firm power amp.
         { 2, 50.0f, 800.0f, 0.0f, 4.0f, 1.5f, 8.0f, 0.06f, 25.0f, 12000.0f, 0.9f, 110.0f, 650.0f, 0.9f, 3000.0f, 0.0f, 0.3f, 4500.0f },
         // Modern Rhythm: tight, scooped-ready crunch.
@@ -181,6 +181,9 @@ private:
         // Lead 51: 5150-style lead channel. Five cascaded cold-clipping stages, tight input, a hard
         // 1.5 kHz push with the fizz rolled off, slightly scooped stack and a firm power section.
         { 5, 105.0f, 1500.0f, 4.0f, 2.0f, 40.0f, 1200.0f, 0.30f, 70.0f, 6000.0f, 0.5f, 100.0f, 700.0f, 0.8f, 3000.0f, -2.0f, 0.25f, 4000.0f },
+        // Cali Lead: California boutique lead style (Mark-type). Five cascaded stages fed by a very tight,
+        // mid-focused front end; smooth singing top, little sag. Made to pair with a V-shaped graphic EQ.
+        { 5, 120.0f, 900.0f, 5.0f, 3.0f, 30.0f, 900.0f, 0.22f, 80.0f, 6500.0f, 0.55f, 90.0f, 650.0f, 0.8f, 2800.0f, -1.0f, 0.2f, 4200.0f },
     } };
 
     void applyVoicing (int channel)

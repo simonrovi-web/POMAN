@@ -1,8 +1,18 @@
-POMAN - Guitar Amp Suite (version portable 0.12.0)
+POMAN - Guitar Amp Suite (version portable 0.12.1)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.12.1
+- Amplificador nuevo "Cali Lead": lead de alta ganancia estilo californiano
+  (tipo Mark): 5 etapas, graves muy apretados, medios definidos y agudos
+  suaves que "cantan". Pensado para usarse con el GRAPHIC EQ en V.
+- 4 presets de rock/metal progresivo: Prog Rhythm (boost delante + EQ en V),
+  Prog Lead (delay en negras + reverb), Prog Crunch y Prog Clean (comp +
+  chorus + delay + reverb).
+- Para acercarte aun mas a un amplificador concreto, carga una captura NAM
+  de ese amplificador (tone3000.com) con LOAD NAM.
 
 Novedades 0.12.0
 - LOOPER (boton LOOP arriba): REC graba, PLAY cierra el bucle, DUB anade

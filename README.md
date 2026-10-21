@@ -15,8 +15,9 @@ Input → [Afinador] → Gate → Comp → Submerge (octavador) → Drive (5 tip
 - **Comp**: compresor feed-forward con rodilla suave de 6 dB, sustain (umbral + ratio), ataque, nivel y mezcla en paralelo.
 - **Drive** (5 tipos, 16x oversampling; Distortion y Fuzz con ADAA de primer orden): Mid Boost (joroba de medios, aprieta graves), Blues Drive (transparente con mezcla limpia),
   Distortion (recorte duro de op-amp), Fuzz (dos etapas, tono con medios recortados) y Treble Boost.
-- **POMAN Amplifier** (10 modelos): Glass Clean, Modern Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch,
-  Hot Rod Lead, Hi-Gain Rect, Tight Djent y Lead 51 (alta ganancia estilo 5150, 5 etapas). Cada modelo define etapas de preamp (2-4), filtros de acoplo,
+- **POMAN Amplifier** (11 modelos): Glass Clean, Modern Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch,
+  Hot Rod Lead, Hi-Gain Rect, Tight Djent, Lead 51 (alta ganancia estilo 5150, 5 etapas) y Cali Lead (lead californiano
+  tipo Mark, 5 etapas, pensado para el EQ en V). NAM Capture ocupa siempre el índice 10 de la lista; los modelos nuevos van detrás. Cada modelo define etapas de preamp (2-4), filtros de acoplo,
   stack de tonos propio (frecuencias y voz de medios), sag y presencia. Las etapas no lineales van a 4x oversampling.
 - **NAM Capture**: carga capturas de [Neural Amp Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore) (`.nam`, WaveNet/LSTM/A2)
   como amplificador. Se cargan y precalientan en el hilo de la interfaz y se intercambian con un try-lock; corren a su
@@ -74,7 +75,7 @@ bloques de audio: suena idéntico con cualquier tamaño de buffer, tras un salto
 
 - **Delay** sincronizable (figuras de 1/2 a 1/16, con puntillo y tresillo) al tempo del DAW o del estudio, con tap tempo.
 - **CAL**: calibración de entrada que lleva el pico de la DI a -9 dBFS.
-- **Presets**: 25 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
+- **Presets**: 29 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
 - **Afinador** YIN (31 Hz a 1,3 kHz) que silencia la salida mientras está abierto.
 - **Medidores** de entrada y salida con indicador de saturación.
 - **Audio**: ASIO y WASAPI de baja latencia; en el primer arranque elige la interfaz ASIO de hardware con el buffer más pequeño estable.

@@ -234,7 +234,8 @@ void PomanProcessor::updateParameters()
     poman::AmpParams ampParams;
     // With NAM selected but no capture loaded, the built-in Glass Clean stands in.
     const int channel = juce::roundToInt (param (Param::ampChannel));
-    ampParams.channel = channel >= namModelIndex() ? 0 : channel;
+    const int voicing = voicingForChoice (channel);
+    ampParams.channel = voicing < 0 ? 0 : voicing;
     ampParams.gain = param (Param::ampGain);
     ampParams.bass = param (Param::ampBass);
     ampParams.mid = param (Param::ampMid);
@@ -462,11 +463,24 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
     storePeak (outputPeak, juce::jmax (blockPeak (left, numSamples), blockPeak (right, numSamples)));
 }
 
+// Saved states and presets store the choice index: these must never change meaning.
+static_assert (PomanProcessor::voicingForChoice (9) == 9, "Lead 51 stays at choice 9");
+static_assert (PomanProcessor::voicingForChoice (10) == -1, "NAM Capture stays at choice 10");
+static_assert (PomanProcessor::voicingForChoice (11) == 10, "models added after NAM follow it");
+
 juce::StringArray PomanProcessor::ampModelChoices()
 {
-    auto names = poman::AmpModel::modelNames();
-    names.add ("NAM Capture");
-    return names;
+    const auto builtIn = poman::AmpModel::modelNames();
+    juce::StringArray choices;
+    for (int i = 0; i < builtIn.size(); ++i)
+    {
+        if (i == namModelIndex())
+            choices.add ("NAM Capture");
+        choices.add (builtIn[i]);
+    }
+    if (builtIn.size() == namModelIndex())
+        choices.add ("NAM Capture");
+    return choices;
 }
 
 juce::Result PomanProcessor::loadFile (FileSlot slot, const juce::File& file)

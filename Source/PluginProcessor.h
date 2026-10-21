@@ -60,9 +60,12 @@ public:
     juce::String getFileName (FileSlot slot) const;                // empty when nothing is set
     bool isFileSlotLoaded (FileSlot slot) const;
 
-    // AMPLIFIER choices: the built-in models followed by the NAM capture slot.
+    // AMPLIFIER choices. "NAM Capture" stays at index 10 forever (where 0.11 put it) so saved states
+    // keep their meaning; built-in models added later are listed after it.
     static juce::StringArray ampModelChoices();
-    static int namModelIndex() { return poman::AmpModel::modelNames().size(); }
+    static constexpr int namModelIndex() { return 10; }
+    // Built-in voicing for a choice index, or -1 for the NAM capture.
+    static constexpr int voicingForChoice (int choice) { return choice < namModelIndex() ? choice : (choice == namModelIndex() ? -1 : choice - 1); }
     double getNamModelRate() const { return namAmp.getModelSampleRate(); }
     int getNamResamplingLatency() const { return namAmp.getLatencySamples(); }
     int getCabAlignmentSamples() const { return cab.getAlignmentSamples(); }
