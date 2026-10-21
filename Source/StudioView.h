@@ -38,7 +38,7 @@ private:
     struct TrackControls
     {
         juce::Label name;
-        juce::TextButton arm { "R" }, mute { "M" }, solo { "S" }, clear { "X" };
+        juce::TextButton arm { "R" }, mute { "M" }, solo { "S" }, clear { "X" }, reamp { "REAMP" };
         juce::Slider volume;
         std::unique_ptr<Lane> lane;
     };

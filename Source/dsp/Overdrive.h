@@ -5,7 +5,7 @@
 
 namespace poman
 {
-// Drive pedal with five circuit types. Each type has its own pre-filtering, gain range,
+// Drive pedal with eight circuit types. Each type has its own pre-filtering, gain range,
 // clipping curve, clean blend and tone control. The whole circuit runs 8x oversampled: hard
 // clippers generate harmonics far above Nyquist, which at the base rate fold back as aliasing.
 class Overdrive
@@ -18,10 +18,17 @@ public:
         distortion,  // op-amp hard clipping with gain-dependent slew roll-off
         fuzz,        // two cascaded clipping stages and a mid-scooped tone stack
         trebleBoost, // germanium-style treble booster that pushes the amp's front end
+        // Added later (saved states store the index):
+        transparent, // clean + germanium-clipped blend with a 1 kHz focus and an active treble control
+        mosfet,      // asymmetric MOSFET clipping: amp-like, more gain, even harmonics
+        octaveFuzz,  // full-wave rectifier before a fuzz: the octave-up "ring"
         count
     };
 
-    static juce::StringArray typeNames() { return { "Mid Boost", "Blues Drive", "Distortion", "Fuzz", "Treble Boost" }; }
+    static juce::StringArray typeNames()
+    {
+        return { "Mid Boost", "Blues Drive", "Distortion", "Fuzz", "Treble Boost", "Transparent OD", "Mosfet Drive", "Octave Fuzz" };
+    }
 
     static constexpr size_t oversamplingOrder = 4; // 16x
 
@@ -48,9 +55,10 @@ public:
         if (oversampling != nullptr)
             oversampling->reset();
         diodeClip.reset();
+        rectifier.reset();
         fuzzStage1.reset();
         fuzzStage2.reset();
-        for (auto* f : { &clipHighPass, &cleanHighPass, &slewLowPass, &toneLowPass, &toneHighPass, &toneShelf })
+        for (auto* f : { &clipHighPass, &cleanHighPass, &slewLowPass, &toneLowPass, &toneHighPass, &toneShelf, &midPeak, &dcBlock, &interStage })
             f->reset();
     }
 
@@ -74,6 +82,9 @@ public:
             case Type::distortion:  driveGain = 2.0f + drive * drive * 1500.0f; break;
             case Type::fuzz:        driveGain = 8.0f + drive * drive * 2500.0f; break;
             case Type::trebleBoost: driveGain = 1.5f + drive * 14.0f; break;
+            case Type::transparent: driveGain = 1.5f + drive * drive * 80.0f; break;
+            case Type::mosfet:      driveGain = 3.0f + drive * drive * 400.0f; break;
+            case Type::octaveFuzz:  driveGain = 4.0f + drive * drive * 600.0f; break;
             case Type::count:       break;
         }
 
@@ -161,6 +172,48 @@ private:
                 break;
             }
 
+            case Type::transparent:
+            {
+                // The clean path fades as DRIVE rises; germanium diodes clip a little asymmetrically.
+                constexpr float bias = 0.15f;
+                const float offset = std::tanh (bias);
+                const float cleanMix = 1.0f - 0.8f * drive;
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const float x = samples[i];
+                    const float clipped = diodeClip (midPeak (clipHighPass (x)) * driveGain + bias) - offset;
+                    samples[i] = slewLowPass (toneShelf (cleanMix * x + 0.5f * clipped)) * 0.62f * level;
+                }
+                break;
+            }
+
+            case Type::mosfet:
+            {
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const float driven = clipHighPass (samples[i]) * driveGain;
+                    // MOSFETs: a softer knee on the negative side, so even harmonics stay in.
+                    const float clipped = driven > 0.0f ? std::tanh (driven) : driven / (1.0f + std::abs (driven) * 0.8f) * 0.9f;
+                    samples[i] = toneLowPass (dcBlock (clipped)) * 0.12f * level;
+                }
+                break;
+            }
+
+            case Type::octaveFuzz:
+            {
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    const float driven = clipHighPass (samples[i]) * driveGain;
+                    // Full-wave rectifying the (already clipping) signal doubles its frequency.
+                    const float rectified = rectifier (fuzzStage1 (driven * 0.5f));
+                    // The rectifier's output is band-limited before the second clipper, which would
+                    // otherwise multiply its upper harmonics into aliases.
+                    const float s = 0.6f * fuzzStage2 (interStage (dcBlock (rectified)) * 6.0f);
+                    samples[i] = slewLowPass (toneLowPass (s)) * 0.2f * level;
+                }
+                break;
+            }
+
             case Type::trebleBoost:
             {
                 constexpr float bias = 0.2f;
@@ -200,6 +253,21 @@ private:
             case Type::trebleBoost:
                 clipHighPass.set (ArrayCoeffs::makeHighPass (sampleRate, 1100.0f, 0.5f));
                 break;
+            case Type::transparent:
+                clipHighPass.set (ArrayCoeffs::makeHighPass (sampleRate, 250.0f, 0.6f));
+                midPeak.set (ArrayCoeffs::makePeakFilter (sampleRate, 1000.0f, 0.7f, dbToGain (6.0f)));
+                slewLowPass.set (ArrayCoeffs::makeLowPass (sampleRate, 11000.0f, 0.707f)); // op-amp bandwidth
+                break;
+            case Type::mosfet:
+                clipHighPass.set (ArrayCoeffs::makeHighPass (sampleRate, 120.0f, 0.707f));
+                dcBlock.set (ArrayCoeffs::makeHighPass (sampleRate, 25.0f, 0.707f));
+                break;
+            case Type::octaveFuzz:
+                clipHighPass.set (ArrayCoeffs::makeHighPass (sampleRate, 200.0f, 0.707f));
+                dcBlock.set (ArrayCoeffs::makeHighPass (sampleRate, 60.0f, 0.707f)); // the rectifier makes DC
+                slewLowPass.set (ArrayCoeffs::makeLowPass (sampleRate, 7000.0f, 0.707f)); // transistor bandwidth
+                interStage.set (ArrayCoeffs::makeLowPass (sampleRate, 9000.0f, 0.707f));
+                break;
             case Type::count:
                 break;
         }
@@ -227,6 +295,15 @@ private:
             case Type::trebleBoost:
                 toneLowPass.set (ArrayCoeffs::makeLowPass (sampleRate, 2200.0f * std::pow (10.0f, tone * 0.75f), 0.707f));
                 break;
+            case Type::transparent:
+                toneShelf.set (ArrayCoeffs::makeHighShelf (sampleRate, 1200.0f, 0.7f, dbToGain ((tone - 0.5f) * 20.0f)));
+                break;
+            case Type::mosfet:
+                toneLowPass.set (ArrayCoeffs::makeLowPass (sampleRate, 800.0f * std::pow (10.0f, tone * 1.2f), 0.707f));
+                break;
+            case Type::octaveFuzz:
+                toneLowPass.set (ArrayCoeffs::makeLowPass (sampleRate, 1200.0f * std::pow (10.0f, tone * 0.9f), 0.707f));
+                break;
             case Type::count:
                 break;
         }
@@ -235,7 +312,24 @@ private:
     double sampleRate = 44100.0 * 8; // the oversampled rate
     std::unique_ptr<juce::dsp::Oversampling<float>> oversampling;
     AdaaTanh diodeClip, fuzzStage1, fuzzStage2; // the high-gain clippers
-    Biquad clipHighPass, cleanHighPass, slewLowPass, toneLowPass, toneHighPass, toneShelf;
+
+    // |x| with first-order antiderivative anti-aliasing (F = x|x| / 2): the rectifier's sharp corner
+    // otherwise folds harmonics back even at 16x.
+    struct AdaaAbs
+    {
+        float operator() (float x) noexcept
+        {
+            const double dx = (double) x - prev;
+            const double y = std::abs (dx) > 1.0e-6 ? (antiderivative (x) - antiderivative (prev)) / dx
+                                                    : std::abs (0.5 * ((double) x + prev));
+            prev = x;
+            return (float) y;
+        }
+        void reset() noexcept { prev = 0.0; }
+        static double antiderivative (double x) noexcept { return 0.5 * x * std::abs (x); }
+        double prev = 0.0;
+    } rectifier;
+    Biquad clipHighPass, cleanHighPass, slewLowPass, toneLowPass, toneHighPass, toneShelf, midPeak, dcBlock, interStage;
     Type type = Type::midBoost, currentType = Type::count;
     float drive = 0.3f, driveGain = 1.0f, level = 1.0f, lastTone = -1.0f, lastDrive = -1.0f;
 };

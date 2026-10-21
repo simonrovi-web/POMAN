@@ -2,6 +2,7 @@
 // CPU is reported as % of one core needed for real time at 48 kHz.
 #include "dsp/AmpModel.h"
 #include "dsp/Ambience.h"
+#include "dsp/BackingTrack.h"
 #include "dsp/NoiseGate.h"
 #include "dsp/Wah.h"
 #include "dsp/CabSim.h"
@@ -177,6 +178,34 @@ int main()
             g.detect (buf.data(), block);
             g.apply (buf.data(), block);
         }));
+    }
+    {
+        // Backing track at 75 % speed and +2 semitones (WSOLA + resampling) from a 44.1 kHz song.
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("poman_bench_song.wav");
+        {
+            const int n = 44100 * 20;
+            juce::AudioBuffer<float> b (2, n);
+            for (int i = 0; i < n; ++i)
+                b.setSample (0, i, 0.3f * (float) std::sin (0.05 * i) * (float) std::sin (0.0003 * i)), b.setSample (1, i, b.getSample (0, i));
+            file.deleteFile();
+            std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
+            juce::WavAudioFormat wav;
+            auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions{}.withSampleRate (44100.0).withNumChannels (2).withBitsPerSample (16));
+            writer->writeFromAudioSampleBuffer (b, 0, n);
+        }
+        poman::BackingTrack t;
+        t.prepare (sampleRate);
+        t.load (file);
+        t.setSpeed (0.75);
+        t.setSemitones (2);
+        t.setLoop (0.0, 19.0, true);
+        t.setPlaying (true);
+        std::vector<float> l (block), r (block);
+        std::printf ("  backing track (0.75x, +2 st) %5.2f %%\n", cpuPercent ([&] (int)
+        {
+            t.process (l.data(), r.data(), block);
+        }));
+        file.deleteFile();
     }
     for (int t = 0; t < 3; ++t)
     {

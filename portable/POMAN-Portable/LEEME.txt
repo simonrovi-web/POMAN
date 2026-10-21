@@ -1,8 +1,29 @@
-POMAN - Guitar Amp Suite (version portable 0.14.0)
+POMAN - Guitar Amp Suite (version portable 0.15.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.15.0
+- Pedales nuevos en DRIVE: Transparent OD (empuja el amplificador sin
+  cambiar su caracter), Mosfet Drive (sensacion de amplificador) y Octave
+  Fuzz (fuzz con octava superior).
+- WHAMMY: pedal de transposicion para el pedal de expresion (+1/+2 oct,
+  -1/-2 oct, +5a, -4a). Sigue la nota que tocas para no desafinarse; en el
+  talon no colorea nada. Con PEDAL ON se enciende al mover el pedal.
+- MOD: tipo Detune (desafinado estereo de estudio, sin vaiven de chorus).
+- Pagina JAM: carga una cancion (WAV, MP3, FLAC, AIFF, OGG) y tocala
+  encima. VELOCIDAD la ralentiza (50-150 %) sin cambiar el tono; TONO la
+  transporta (+/-12 semitonos) sin cambiar la velocidad. Bucle A-B para
+  practicar un fragmento. La cancion se oye pero no se graba en tus tomas.
+- ESTUDIO: cada toma graba tambien la guitarra limpia (DI) en
+  "Track N DI.wav". REAMP pasa esa DI por el sonido actual y la graba como
+  toma nueva, en su sitio: cambia de amplificador o preset sin volver a
+  tocar.
+- Las pestanas de pagina estan en su propia fila; el selector de presets
+  es mas ancho.
+- 3 presets nuevos: Transparent Push, Octave Fuzz Lead y Whammy Detune Lead
+  (43 en total).
 
 Novedades 0.14.0
 - Valvulas modeladas por fisica en todos los amplificadores:

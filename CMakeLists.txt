@@ -1,6 +1,6 @@
 ﻿cmake_minimum_required(VERSION 3.22)
 
-project(POMAN VERSION 0.14.0 LANGUAGES C CXX)
+project(POMAN VERSION 0.15.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -39,6 +39,7 @@ target_sources(POMAN PRIVATE
     Source/DrumView.cpp
     Source/LoopView.cpp
     Source/LiveView.cpp
+    Source/JamView.cpp
     Source/dsp/NamAmp.cpp)
 
 target_include_directories(POMAN PRIVATE Source)
@@ -50,7 +51,8 @@ target_compile_definitions(POMAN PUBLIC
     JUCE_DISPLAY_SPLASH_SCREEN=0
     JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1
     JUCE_ASIO=1
-    JUCE_WASAPI=1)
+    JUCE_WASAPI=1
+    JUCE_USE_MP3AUDIOFORMAT=1)
 
 target_link_libraries(POMAN
     PRIVATE

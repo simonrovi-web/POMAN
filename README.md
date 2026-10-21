@@ -19,8 +19,13 @@ Input → [Afinador] → Gate (detección) → Comp → Wah → Octavador → Dr
   **Volumen**: pedal de volumen con curva de audio antes de los efectos de tiempo.
 - **Submerge**: octava abajo con divisor flip-flop y octava arriba con rectificador de onda completa.
 - **Comp**: compresor feed-forward con rodilla suave de 6 dB, sustain (umbral + ratio), ataque, nivel y mezcla en paralelo.
-- **Drive** (5 tipos, 16x oversampling; Distortion y Fuzz con ADAA de primer orden): Mid Boost (joroba de medios, aprieta graves), Blues Drive (transparente con mezcla limpia),
-  Distortion (recorte duro de op-amp), Fuzz (dos etapas, tono con medios recortados) y Treble Boost.
+- **Drive** (8 tipos, 16x oversampling; los recortes fuertes con ADAA de primer orden): Mid Boost (joroba de medios, aprieta graves), Blues Drive (transparente con mezcla limpia),
+  Distortion (recorte duro de op-amp), Fuzz (dos etapas, tono con medios recortados), Treble Boost, Transparent OD (limpio + germanio
+  asimétrico con foco en 1 kHz y control de agudos activo), Mosfet Drive (recorte MOSFET asimétrico) y Octave Fuzz (rectificador
+  de onda completa con ADAA antes del fuzz, con paso bajo entre etapas).
+- **Whammy**: transpositor de doble lectura con ventana sincronizada a periodos enteros de la nota (YIN, como el
+  armonizador), así que no desafina (±1 cent medido); de 0 a ±12/24 semitonos según la posición del pedal de expresión,
+  paso directo en el talón. **Detune** (tipo de MOD): ±15 cents estéreo con cruce trapezoidal, exacto entre empalmes.
 - **POMAN Amplifier** (17 modelos): Glass Clean, Modern Rhythm, Modern Lead, US Clean, Chime Class A, Brit Crunch,
   Hot Rod Lead, Hi-Gain Rect, Tight Djent, Lead 51 (alta ganancia estilo 5150, 5 etapas) y Cali Lead (lead californiano
   tipo Mark, 5 etapas, pensado para el EQ en V) y Liquid Lead (lead virtuoso: 4 etapas, medios vocales a 1,2 kHz,
@@ -56,7 +61,9 @@ Input → [Afinador] → Gate (detección) → Comp → Wah → Octavador → Dr
 Página **STUDIO** con 4 pistas estéreo: grabación de la salida completa del rig mientras suenan las demás pistas,
 cuenta atrás de un compás con pre-roll, mute/solo/volumen, metrónomo, sesiones (`session.xml`, se guardan solas y se
 reabren con OPEN SESSION), compensación automática de latencia (entrada + salida del dispositivo + latencia
-del plugin) y exportación de la mezcla. Las tomas se escriben en disco desde un hilo en segundo plano
+del plugin) y exportación de la mezcla. Cada toma guarda además la DI limpia (`Track N DI.wav`, alineada con la toma);
+**REAMP** la reproduce por el rig actual desde el inicio de la toma y graba el resultado como toma nueva compensando
+solo la latencia del plugin, y se detiene sola. Las tomas se escriben en disco desde un hilo en segundo plano
 (`ThreadedWriter`) como WAV de 24 bits en `Recordings/Session <fecha>/`; el hilo de audio no se bloquea nunca.
 En el VST3 la página no aparece: ahí graba el DAW.
 
@@ -98,6 +105,12 @@ incluye muestras de terceros. El tiempo se calcula solo a partir de la posición
 bloques de audio: suena idéntico con cualquier tamaño de buffer, tras un salto y en el render offline de EXPORT MIX
 (lo verifica una prueba). Se mezcla después del grabador, así que no entra en las tomas de guitarra.
 
+## JAM (standalone)
+
+Reproductor de acompañamiento: WSOLA (tramas Hann de 2048 con búsqueda por correlación de ±384 muestras) para la velocidad
+y remuestreo Lagrange para el tono, bucle A-B, MP3/FLAC/WAV/AIFF/OGG en memoria a 16 bits (hasta 15 min). Se mezcla
+después del grabador, así que no entra en las tomas. ~0,8 % de un núcleo con velocidad y tono cambiados.
+
 ## Directo e idioma (standalone)
 
 Página **LIVE/DIRECTO**: preset en grande con < > grandes, pulsadores DRIVE/WAH/MOD/DELAY/REVERB/TAP/AFINADOR (MIDI learn
@@ -109,7 +122,7 @@ guardar estado por componente.
 
 - **Delay** sincronizable (figuras de 1/2 a 1/16, con puntillo y tresillo) al tempo del DAW o del estudio, con tap tempo.
 - **CAL**: calibración de entrada que lleva el pico de la DI a -9 dBFS.
-- **Presets**: 40 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
+- **Presets**: 43 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
 - **Afinador** YIN (31 Hz a 1,3 kHz) que silencia la salida mientras está abierto.
 - **Medidores** de entrada y salida con indicador de saturación.
 - **Audio**: ASIO y WASAPI de baja latencia; en el primer arranque elige la interfaz ASIO de hardware con el buffer más pequeño estable.

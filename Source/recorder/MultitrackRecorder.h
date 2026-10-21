@@ -15,6 +15,11 @@ namespace poman
 // BufferingAudioReaders that read ahead on a background thread. Waveform peaks are collected while
 // recording (and cached beside each WAV as .peaks), and the mix export renders in chunks.
 //
+// DI and re-amping: every take also records the clean guitar as it enters the rig (<take> DI.wav,
+// mono), aligned to the take. startReamp() plays a take's DI back into the rig (readDi() replaces the
+// live input) while the rig's output is recorded as the track's new take, compensating only the
+// plugin's latency (no device round trip is involved), then stops by itself.
+//
 // Threading: process() runs on the audio thread and never blocks on disk. Everything else runs on
 // the message thread; takes are only swapped under a lock the audio thread try-locks, and old
 // takes are destroyed outside it.
@@ -32,6 +37,10 @@ public:
     void prepare (double sampleRate, int maxBlockSize);
     // Records the incoming rig output (when recording), then adds track playback and the click.
     void process (float* left, float* right, int numSamples) noexcept;
+    // Call before process() each block with the clean guitar (after input gain): recorded as the DI.
+    void captureDi (const float* mono, int numSamples) noexcept;
+    // While re-amping, fills `mono` with the DI for this block and returns true (the live input is ignored).
+    bool readDi (float* mono, int numSamples) noexcept;
 
     // Message thread -------------------------------------------------------------------------
     void play();
@@ -50,6 +59,16 @@ public:
     float getVolume (int track) const { return trackVolume[(size_t) track].load(); }
 
     void clearTrack (int track);
+
+    // Re-amping (message thread): plays the track's DI through the rig from the take's start and records
+    // the result as its new take. pollReamp() (call regularly) stops it once the DI and a short tail
+    // have played.
+    juce::Result startReamp (int track);
+    bool isReamping() const { return reampTrack.load() >= 0; }
+    void pollReamp();
+    bool hasDi (int track) const;
+    // The rig's own latency, part of the device round trip: re-amping compensates only this.
+    void setPluginLatency (int samples) { pluginLatency.store (juce::jmax (0, samples)); }
     void newSession();
     // session.xml in the session folder: takes (file, position, latency trim), mixer, tempo and click.
     // Written automatically after every take and on exit; call after mixer edits to keep it current.
@@ -98,6 +117,8 @@ public:
         juce::int64 start = 0, length = 0;
         const std::vector<float>* peaks = nullptr; // max |sample| per samplesPerPeak block
         juce::String fileName;
+        juce::File file, diFile; // diFile empty when the take has no DI
+        int trim = 0, diTrim = 0;
     };
     TrackInfo getTrackInfo (int track) const;
     juce::int64 getSessionLength() const;
@@ -111,10 +132,13 @@ private:
         int fileChannels = 2;
         std::vector<float> peaks;
         juce::File file;
+        juce::File diFile; // the clean guitar of this take ("" when it has none)
+        int diTrim = 0;    // samples skipped at the head of the DI file
     };
 
     void finishRecording();
-    std::unique_ptr<Take> loadTake (const juce::File& file, juce::int64 start, int trimSamples, std::vector<float>* knownPeaks = nullptr);
+    std::unique_ptr<Take> loadTake (const juce::File& file, juce::int64 start, int trimSamples, std::vector<float>* knownPeaks = nullptr,
+                                    const juce::File& diFile = {}, int diTrim = 0);
     std::vector<float> readPeaks (juce::AudioFormatReader& reader, int trimSamples) const;
     void drainLivePeaks();
     void replaceTake (int track, std::unique_ptr<Take> take);
@@ -139,8 +163,9 @@ private:
     int livePeakCount = 0;
 
     juce::SpinLock writerLock;
-    std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> activeWriter;
-    juce::File recordingFile;
+    std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> activeWriter, diWriter;
+    juce::File recordingFile, recordingDiFile;
+    int recordingDiTrim = 0;
     std::atomic<juce::int64> recordingStart { 0 }; // take start on the timeline, read by process()
     int recordingTrim = 0;
     std::atomic<int> recordingTrack { -1 }; // written on the message thread, read by process()
@@ -154,7 +179,17 @@ private:
     std::atomic<juce::int64> seekRequest { noSeek };
     std::atomic<double> sampleRate { 48000.0 };
     std::atomic<int> armedTrack { 0 };
-    std::atomic<int> latencyCompensation { 0 };
+    std::atomic<int> latencyCompensation { 0 }, pluginLatency { 0 };
+
+    // Re-amping: the DI being played into the rig, from where on the timeline, and until when.
+    juce::SpinLock reampLock;
+    std::unique_ptr<juce::BufferingAudioReader> reampReader;
+    juce::File reampFile;
+    std::atomic<int> reampTrack { -1 };
+    juce::int64 reampDiStart = 0;
+    int reampDiTrim = 0;
+    std::atomic<juce::int64> reampEnd { 0 };
+    std::atomic<bool> reampDone { false };
     std::array<std::atomic<bool>, numTracks> trackMuted {}, trackSolo {};
     std::array<std::atomic<float>, numTracks> trackVolume {};
 

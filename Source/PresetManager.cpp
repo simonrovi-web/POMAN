@@ -225,6 +225,23 @@ const std::vector<FactoryPreset>& factoryPresets()
             { "odOn", 1 }, { "odType", 0 }, { "odDrive", 0.1f }, { "odTone", 0.55f }, { "odLevel", 6.0f }, { "gateThreshold", -62.0f },
             { "dlyOn", 1 }, { "dlySync", 4 }, { "dlyFeedback", 0.3f }, { "dlyMix", 0.18f },
             { "revOn", 1 }, { "revType", 2 }, { "revSize", 0.55f }, { "revMix", 0.15f } } },
+        // New pedals (odType 5 Transparent OD, 6 Mosfet Drive, 7 Octave Fuzz; whamMode 0 = +1 Oct, modType 3 = Detune).
+        { "Transparent Push",
+          { { "ampChannel", 14 }, { "ampGain", 5.0f }, { "ampMid", 6.0f }, { "ampTreble", 6.0f }, { "ampMaster", 6.5f },
+            { "odOn", 1 }, { "odType", 5 }, { "odDrive", 0.35f }, { "odTone", 0.55f }, { "odLevel", 4.0f }, { "gateThreshold", -66.0f },
+            { "revOn", 1 }, { "revType", 0 }, { "revSize", 0.45f }, { "revMix", 0.12f } } },
+        { "Octave Fuzz Lead",
+          { { "ampChannel", 15 }, { "ampGain", 4.5f }, { "ampMid", 6.0f }, { "ampMaster", 6.0f },
+            { "odOn", 1 }, { "odType", 7 }, { "odDrive", 0.6f }, { "odTone", 0.5f }, { "odLevel", 0.0f }, { "gateThreshold", -62.0f },
+            { "dlyOn", 1 }, { "dlySync", 4 }, { "dlyFeedback", 0.3f }, { "dlyMix", 0.18f },
+            { "revOn", 1 }, { "revType", 1 }, { "revSize", 0.5f }, { "revMix", 0.15f } } },
+        { "Whammy Detune Lead",
+          { { "ampChannel", 12 }, { "ampGain", 6.5f }, { "ampMid", 6.0f }, { "ampMaster", 6.0f },
+            { "odOn", 1 }, { "odType", 6 }, { "odDrive", 0.2f }, { "odLevel", 2.0f }, { "gateThreshold", -64.0f },
+            { "whamOn", 1 }, { "whamMode", 0 }, { "whamPos", 0.0f }, { "whamMix", 1.0f },
+            { "modOn", 1 }, { "modType", 3 }, { "modDepth", 0.6f }, { "modMix", 0.5f },
+            { "dlyOn", 1 }, { "dlySync", 4 }, { "dlyFeedback", 0.3f }, { "dlyMix", 0.2f },
+            { "revOn", 1 }, { "revType", 2 }, { "revSize", 0.6f }, { "revMix", 0.2f } } },
     };
     return presets;
 }

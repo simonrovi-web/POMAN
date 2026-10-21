@@ -250,8 +250,19 @@ StudioView::StudioView (poman::MultitrackRecorder& r) : recorder (r)
         tc.mute.onClick = [this, t] { recorder.setMuted (t, ! recorder.isMuted (t)); recorder.saveSession(); refreshControls(); };
         tc.solo.onClick = [this, t] { recorder.setSolo (t, ! recorder.isSolo (t)); recorder.saveSession(); refreshControls(); };
         tc.clear.onClick = [this, t] { recorder.clearTrack (t); recorder.saveSession(); refreshControls(); };
+        tc.reamp.setColour (juce::TextButton::buttonOnColourId, recordRed);
+        tc.reamp.setTooltip ("Re-amp: play this take's clean DI through the current rig and record the result as the new take");
+        tc.reamp.onClick = [this, t]
+        {
+            const auto result = recorder.startReamp (t);
+            if (result.failed())
+                setStatus (result.getErrorMessage(), true);
+            else
+                setStatus (tr ("Re-amping track ") + juce::String (t + 1) + "...");
+            refreshControls();
+        };
 
-        for (auto* b : { &tc.arm, &tc.mute, &tc.solo, &tc.clear })
+        for (auto* b : { &tc.arm, &tc.mute, &tc.solo, &tc.clear, &tc.reamp })
             addAndMakeVisible (*b);
 
         tc.volume.setSliderStyle (juce::Slider::LinearHorizontal);
@@ -313,11 +324,23 @@ void StudioView::refreshControls()
         tc.mute.setToggleState (recorder.isMuted (t), juce::dontSendNotification);
         tc.solo.setToggleState (recorder.isSolo (t), juce::dontSendNotification);
         tc.clear.setEnabled (recorder.getTrackInfo (t).hasAudio);
+        tc.reamp.setEnabled (recorder.hasDi (t) && state != State::recording);
+        tc.reamp.setToggleState (recorder.isReamping() && recorder.getRecordingTrack() == t, juce::dontSendNotification);
     }
 }
 
 void StudioView::timerCallback()
 {
+    // A re-amp stops by itself at the end of the DI (the audio thread only flags it).
+    if (recorder.isReamping())
+    {
+        recorder.pollReamp();
+        if (! recorder.isReamping())
+        {
+            setStatus (tr ("Re-amp done: ") + recorder.getTrackInfo (juce::jmax (0, recorder.getArmedTrack())).fileName);
+            refreshControls();
+        }
+    }
     // Show at least a minute, and always some room after the last take and the playhead.
     const double sr = recorder.getSampleRate();
     const auto wanted = juce::jmax ((juce::int64) (60.0 * sr),
@@ -415,7 +438,8 @@ void StudioView::resized()
         tc.name.setBounds (top.removeFromLeft (80));
         for (auto* b : { &tc.arm, &tc.mute, &tc.solo, &tc.clear })
             b->setBounds (top.removeFromLeft (30).reduced (2, 4));
-        tc.volume.setBounds (header.reduced (4, 2).withTrimmedRight (10));
+        tc.reamp.setBounds (header.removeFromRight (66).withSizeKeepingCentre (62, 26));
+        tc.volume.setBounds (header.reduced (4, 2).withTrimmedRight (4));
         tc.lane->setBounds (row);
     }
 }

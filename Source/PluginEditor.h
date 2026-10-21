@@ -6,6 +6,7 @@
 #include "DrumView.h"
 #include "LoopView.h"
 #include "LiveView.h"
+#include "JamView.h"
 #include "RightClickable.h"
 
 class PomanLookAndFeel : public juce::LookAndFeel_V4
@@ -145,12 +146,13 @@ private:
     std::array<Knob*, 2> harmIntervalKnobs {};
     juce::Label harmInfoLabel;
 
-    juce::ComboBox modTypeBox, revTypeBox, wahModeBox;
-    juce::TextButton wahAutoButton { "PEDAL ON" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> wahAutoAttachment;
+    juce::ComboBox modTypeBox, revTypeBox, wahModeBox, whammyModeBox;
+    juce::TextButton wahAutoButton { "PEDAL ON" }, whammyAutoButton { "PEDAL ON" };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> wahAutoAttachment, whammyAutoAttachment;
 
     Section* compSection = nullptr;
     Section* wahSection = nullptr;
+    Section* whammySection = nullptr;
     juce::Label compGrLabel;
     Knob* delayTimeKnob = nullptr;
     juce::ComboBox delaySyncBox;
@@ -161,7 +163,7 @@ private:
     float calibrationPeak = 0.0f;
     void startCalibration();
     void updateCalibration (double now);
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modTypeAttachment, revTypeAttachment, wahModeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modTypeAttachment, revTypeAttachment, wahModeAttachment, whammyModeAttachment;
     std::array<Knob*, 2> modVariableKnobs {}; // mix/feedback, relabelled as shape/stereo for the tremolo
     int shownModType = -1;
     void refreshModLabels();
@@ -184,12 +186,14 @@ private:
 
     // Standalone only: RIG / STUDIO pages (a DAW does its own recording).
     juce::TextButton rigPageButton { "RIG" }, studioPageButton { "STUDIO" }, drumsPageButton { "DRUMS" }, loopPageButton { "LOOP" },
-                     livePageButton { "LIVE" };
+                     livePageButton { "LIVE" }, jamPageButton { "JAM" };
     std::unique_ptr<StudioView> studioView;
     std::unique_ptr<DrumView> drumView;
     std::unique_ptr<LoopView> loopView;
     std::unique_ptr<LiveView> liveView;
-    enum class Page { rig, studio, drums, loop, live };
+    std::unique_ptr<JamView> jamView;
+    enum class Page { rig, studio, drums, loop, live, jam };
+    static constexpr int headerHeight = 64, tabsHeight = 36; // the page tabs row exists in the standalone only
     void showPage (Page page);
     TunerDisplay tunerDisplay;
     poman::TunerReading lastTunerReading; // shared with the LIVE page (one consumer of the tuner FIFO)

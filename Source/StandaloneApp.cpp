@@ -146,7 +146,8 @@ public:
             const juce::String page = commandLine.contains ("--studio") ? "STUDIO"
                                     : commandLine.contains ("--drums")  ? "DRUMS"
                                     : commandLine.contains ("--loop")   ? "LOOP"
-                                    : commandLine.contains ("--live")   ? "LIVE" : "";
+                                    : commandLine.contains ("--live")   ? "LIVE"
+                                    : commandLine.contains ("--jam")    ? "JAM" : "";
             if (page.isNotEmpty())
                 juce::Timer::callAfterDelay (800, [this, page]
                 {

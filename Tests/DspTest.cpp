@@ -1,5 +1,7 @@
 ﻿// Offline render of every amp model and drive type: checks for NaN/silence/runaway levels
 // and prints RMS so the models can be level-matched.
+#include "dsp/BackingTrack.h"
+#include "dsp/PitchShift.h"
 #include "dsp/Tubes.h"
 #include "dsp/Wah.h"
 #include "dsp/NoiseGate.h"
@@ -1490,6 +1492,187 @@ int main()
         ppOk = ppOk && crossover[(int) PowerTube::el84] > crossover[(int) PowerTube::sixL6];
         failures += ppOk ? 0 : 1;
         std::printf ("%s  %-24s symmetric, slope <= 1; small-signal gain: %s\n", ppOk ? "PASS" : "FAIL", "push-pull pairs", line.toRawUTF8());
+    }
+
+    std::printf ("-- Whammy and detune --\n");
+    {
+        // Median YIN pitch of the second half of a signal. 4096-sample windows hold two periods of the
+        // lowest result (-2 octaves from 220 Hz = 55 Hz); YIN cannot see longer periods than half a window.
+        const auto pitchOf = [&] (const std::vector<float>& y, float minHz, float maxHz)
+        {
+            poman::YinDetector yin;
+            std::vector<float> estimates;
+            for (size_t start = y.size() / 2; start + 4096 <= y.size(); start += 480)
+                if (const float hz = yin.detect (y.data() + start, 4096, sampleRate, minHz, maxHz); hz > 0.0f)
+                    estimates.push_back (hz);
+            std::sort (estimates.begin(), estimates.end());
+            return estimates.empty() ? 0.0f : estimates[estimates.size() / 2];
+        };
+        const int total = (int) sampleRate;
+        std::vector<float> note ((size_t) total);
+        for (int i = 0; i < total; ++i)
+            note[(size_t) i] = 0.3f * (float) std::sin (juce::MathConstants<double>::twoPi * 220.0 * i / sampleRate);
+
+        juce::String line;
+        bool ok = true;
+        for (int mode = 0; mode < poman::Whammy::modeNames().size(); ++mode)
+        {
+            poman::Whammy w;
+            w.prepare (sampleRate);
+            w.setParams (mode, 1.0f, 1.0f);
+            w.reset();
+            auto y = note;
+            for (int start = 0; start < total; start += blockSize)
+                w.process (y.data() + start, juce::jmin (blockSize, total - start));
+            const float expected = 220.0f * std::exp2 (poman::Whammy::modeSemitones (mode) / 12.0f);
+            const float got = pitchOf (y, 40.0f, 1900.0f);
+            const float cents = got > 0.0f ? 1200.0f * std::log2 (got / expected) : 9999.0f;
+            ok = ok && std::abs (cents) < 5.0f;
+            line << poman::Whammy::modeNames()[mode] << " " << juce::String (cents, 1) << "c  ";
+        }
+        // At the heel the pedal passes the signal untouched (no comb filtering from the shifter).
+        {
+            poman::Whammy w;
+            w.prepare (sampleRate);
+            w.setParams (0, 0.0f, 1.0f);
+            w.reset();
+            auto y = note;
+            for (int start = 0; start < total; start += blockSize)
+                w.process (y.data() + start, juce::jmin (blockSize, total - start));
+            float diff = 0.0f;
+            for (int i = 0; i < total; ++i)
+                diff = std::max (diff, std::abs (y[(size_t) i] - note[(size_t) i]));
+            ok = ok && diff < 1.0e-6f;
+            line << "heel diff " << juce::String (diff, 7);
+        }
+        failures += ok ? 0 : 1;
+        std::printf ("%s  %-24s toe pitch error: %s\n", ok ? "PASS" : "FAIL", "whammy", line.toRawUTF8());
+
+        // Detune: left flat and right sharp by the depth (15 cents at full).
+        poman::Modulation mod;
+        mod.prepare (sampleRate, blockSize);
+        mod.setParams (poman::Modulation::Type::detune, 1.0f, 1.0f, 1.0f, 0.0f);
+        std::vector<float> l = note, r = note;
+        for (int start = 0; start < total; start += blockSize)
+            mod.process (l.data() + start, r.data() + start, juce::jmin (blockSize, total - start));
+        // The wet part alone (out - 0.5 dry) carries the shifted pitch.
+        for (int i = 0; i < total; ++i)
+            l[(size_t) i] -= 0.5f * note[(size_t) i], r[(size_t) i] -= 0.5f * note[(size_t) i];
+        const float centsL = 1200.0f * std::log2 (pitchOf (l, 100.0f, 400.0f) / 220.0f);
+        const float centsR = 1200.0f * std::log2 (pitchOf (r, 100.0f, 400.0f) / 220.0f);
+        const bool detuneOk = std::abs (centsL + 15.0f) < 1.0f && std::abs (centsR - 15.0f) < 1.0f;
+        failures += detuneOk ? 0 : 1;
+        std::printf ("%s  %-24s left %+.1f cents, right %+.1f cents (want -15 / +15)\n", detuneOk ? "PASS" : "FAIL", "detune", centsL, centsR);
+    }
+
+    std::printf ("-- Backing track (speed / pitch / loop) --\n");
+    {
+        // A 4 s, 440 Hz stereo song at 44.1 kHz (the engine runs at 48 kHz, so the rate converts too).
+        const auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("poman_song_test.wav");
+        {
+            const double rate = 44100.0;
+            const int n = (int) (rate * 4.0);
+            juce::AudioBuffer<float> b (2, n);
+            for (int i = 0; i < n; ++i)
+            {
+                const float s = 0.4f * (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * i / rate);
+                b.setSample (0, i, s), b.setSample (1, i, s);
+            }
+            file.deleteFile();
+            std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
+            juce::WavAudioFormat wav;
+            auto writer = wav.createWriterFor (stream, juce::AudioFormatWriterOptions{}.withSampleRate (rate).withNumChannels (2).withBitsPerSample (24));
+            writer->writeFromAudioSampleBuffer (b, 0, n);
+        }
+
+        struct Run { std::vector<float> out; double seconds; };
+        const auto play = [&] (double speed, int semis)
+        {
+            poman::BackingTrack t;
+            t.prepare (sampleRate);
+            t.load (file);
+            t.setSpeed (speed);
+            t.setSemitones (semis);
+            t.setVolume (1.0f);
+            t.setPlaying (true);
+            Run run;
+            std::vector<float> l (blockSize), r (blockSize);
+            while (t.isPlaying() && run.out.size() < (size_t) (sampleRate * 20))
+            {
+                std::fill (l.begin(), l.end(), 0.0f), std::fill (r.begin(), r.end(), 0.0f);
+                t.process (l.data(), r.data(), blockSize);
+                run.out.insert (run.out.end(), l.begin(), l.end());
+            }
+            // Duration: up to the last non-silent sample.
+            size_t last = 0;
+            for (size_t i = 0; i < run.out.size(); ++i)
+                if (std::abs (run.out[i]) > 1.0e-3f)
+                    last = i;
+            run.seconds = (double) last / sampleRate;
+            return run;
+        };
+        const auto pitchCents = [&] (const std::vector<float>& y, double expectedHz)
+        {
+            poman::YinDetector yin;
+            std::vector<float> estimates;
+            for (size_t start = (size_t) (0.3 * sampleRate); start + 2048 <= y.size() - (size_t) (0.3 * sampleRate); start += 960)
+                if (const float hz = yin.detect (y.data() + start, 2048, sampleRate, 100.0f, 1500.0f); hz > 0.0f)
+                    estimates.push_back (hz);
+            std::sort (estimates.begin(), estimates.end());
+            if (estimates.empty())
+                return 9999.0;
+            // Worst of the 10th / 90th percentiles: a bad splice would show up as a stray estimate.
+            const double lo = estimates[estimates.size() / 10], hi = estimates[estimates.size() * 9 / 10];
+            const double c1 = 1200.0 * std::log2 (lo / expectedHz), c2 = 1200.0 * std::log2 (hi / expectedHz);
+            return std::abs (c1) > std::abs (c2) ? c1 : c2;
+        };
+        const auto levelSpread = [&] (const std::vector<float>& y, double seconds) // max-min of 50 ms RMS, dB
+        {
+            float lo = 1e9f, hi = -1e9f;
+            const int w = (int) (0.05 * sampleRate);
+            for (int s = (int) (0.2 * sampleRate); s + w < (int) (seconds * sampleRate) - (int) (0.2 * sampleRate); s += w)
+            {
+                double e = 0.0;
+                for (int i = s; i < s + w; ++i)
+                    e += (double) y[(size_t) i] * y[(size_t) i];
+                const float db = (float) (10.0 * std::log10 (e / w + 1e-20));
+                lo = std::min (lo, db), hi = std::max (hi, db);
+            }
+            return hi - lo;
+        };
+
+        const auto normal = play (1.0, 0), slow = play (0.75, 0), up = play (1.0, 3);
+        const double cN = pitchCents (normal.out, 440.0), cS = pitchCents (slow.out, 440.0), cU = pitchCents (up.out, 440.0 * std::exp2 (3.0 / 12.0));
+        const bool durations = std::abs (normal.seconds - 4.0) < 0.08 && std::abs (slow.seconds - 4.0 / 0.75) < 0.1 && std::abs (up.seconds - 4.0) < 0.08;
+        const bool pitches = std::abs (cN) < 5.0 && std::abs (cS) < 5.0 && std::abs (cU) < 5.0;
+        const float spread = std::max (levelSpread (slow.out, slow.seconds), levelSpread (up.out, up.seconds));
+        const bool ok = durations && pitches && spread < 1.0f;
+        failures += ok ? 0 : 1;
+        std::printf ("%s  %-24s 1x %.2f s %+.1fc | 0.75x %.2f s (want %.2f) %+.1fc | +3 st %.2f s %+.1fc | level spread %.2f dB\n",
+                     ok ? "PASS" : "FAIL", "speed and pitch", normal.seconds, cN, slow.seconds, 4.0 / 0.75, cS, up.seconds, cU, spread);
+
+        // A-B loop: the position stays inside 1.0-2.0 s for 6 s of playing, and playback keeps going.
+        {
+            poman::BackingTrack t;
+            t.prepare (sampleRate);
+            t.load (file);
+            t.setLoop (1.0, 2.0, true);
+            t.seek (1.0);
+            t.setPlaying (true);
+            std::vector<float> l (blockSize), r (blockSize);
+            double lo = 1e9, hi = -1e9;
+            for (int b = 0; b < (int) (6.0 * sampleRate) / blockSize; ++b)
+            {
+                std::fill (l.begin(), l.end(), 0.0f), std::fill (r.begin(), r.end(), 0.0f);
+                t.process (l.data(), r.data(), blockSize);
+                if (b > 10)
+                    lo = std::min (lo, t.getPositionSeconds()), hi = std::max (hi, t.getPositionSeconds());
+            }
+            const bool loopOk = t.isPlaying() && lo >= 0.99 && hi <= 2.06;
+            failures += loopOk ? 0 : 1;
+            std::printf ("%s  %-24s position stayed in %.2f..%.2f s over 6 s\n", loopOk ? "PASS" : "FAIL", "A-B loop", lo, hi);
+        }
+        file.deleteFile();
     }
     return failures;
 }

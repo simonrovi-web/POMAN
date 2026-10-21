@@ -31,6 +31,51 @@ void MultitrackRecorder::prepare (double newSampleRate, int maxBlockSize)
 }
 
 //==============================================================================
+void MultitrackRecorder::captureDi (const float* mono, int numSamples) noexcept
+{
+    if (state.load() != State::recording || isReamping())
+        return;
+    auto position = playhead.load();
+    if (const auto seek = seekRequest.load(); seek != noSeek)
+        position = seek; // process() applies it this block: capture on the same timeline
+    const auto takeStart = recordingStart.load();
+    if (position + numSamples <= takeStart)
+        return;
+
+    const juce::SpinLock::ScopedTryLockType lock (writerLock);
+    if (lock.isLocked() && diWriter != nullptr)
+    {
+        const int skip = (int) juce::jmax ((juce::int64) 0, takeStart - position);
+        const float* channels[] { mono + skip };
+        diWriter->write (channels, numSamples - skip);
+    }
+}
+
+bool MultitrackRecorder::readDi (float* mono, int numSamples) noexcept
+{
+    if (! isReamping() || state.load() != State::recording)
+        return false;
+    const juce::SpinLock::ScopedTryLockType lock (reampLock);
+    if (! lock.isLocked() || reampReader == nullptr)
+        return false;
+
+    auto position = playhead.load();
+    if (const auto seek = seekRequest.load(); seek != noSeek)
+        position = seek;
+    juce::FloatVectorOperations::clear (mono, numSamples);
+    const auto offset = position - reampDiStart;
+    const auto first = juce::jmax ((juce::int64) 0, -offset);
+    const auto last = juce::jmin ((juce::int64) numSamples, reampReader->lengthInSamples - reampDiTrim - offset);
+    if (first < last)
+    {
+        float* dest[] { mono + first };
+        reampReader->read (dest, 1, reampDiTrim + offset + first, (int) (last - first));
+    }
+    if (position + numSamples >= reampEnd.load())
+        reampDone.store (true); // the message thread stops it (pollReamp)
+    return true;
+}
+
 void MultitrackRecorder::process (float* left, float* right, int numSamples) noexcept
 {
     const auto currentState = state.load();
@@ -205,6 +250,7 @@ juce::Result MultitrackRecorder::record()
         sessionOwned = true;
     }
 
+    const bool reamping = isReamping();
     auto file = sessionFolder.getNonexistentChildFile ("Track " + juce::String (track + 1), ".wav", false);
     std::unique_ptr<juce::OutputStream> stream = std::make_unique<juce::FileOutputStream> (file);
     if (! static_cast<juce::FileOutputStream*> (stream.get())->openedOk())
@@ -220,6 +266,24 @@ juce::Result MultitrackRecorder::record()
 
     auto threaded = std::make_unique<juce::AudioFormatWriter::ThreadedWriter> (writer.release(), writerThread, 65536);
 
+    // The clean guitar, beside the take (not when re-amping: the new take keeps using its DI).
+    std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> threadedDi;
+    recordingDiFile = juce::File();
+    if (! reamping)
+    {
+        const auto diFile = file.getSiblingFile (file.getFileNameWithoutExtension() + " DI.wav");
+        std::unique_ptr<juce::OutputStream> diStream = std::make_unique<juce::FileOutputStream> (diFile);
+        if (static_cast<juce::FileOutputStream*> (diStream.get())->openedOk())
+            if (auto w = wav.createWriterFor (diStream, juce::AudioFormatWriterOptions{}
+                                                           .withSampleRate (sampleRate.load())
+                                                           .withNumChannels (1)
+                                                           .withBitsPerSample (24)))
+            {
+                threadedDi = std::make_unique<juce::AudioFormatWriter::ThreadedWriter> (w.release(), writerThread, 65536);
+                recordingDiFile = diFile;
+            }
+    }
+
     recordingFile = file;
     recordingTrack = track;
     livePeaks.clear();
@@ -228,14 +292,18 @@ juce::Result MultitrackRecorder::record()
     livePeakMax = 0.0f;
     livePeakCount = 0;
     recordingStart = playhead.load();
-    recordingTrim = latencyCompensation.load();
+    // The recorded rig output is late by the device round trip plus the rig; the DI, captured as it
+    // enters the rig, only by the device part. Re-amping involves no device: only the rig's latency.
+    recordingTrim = reamping ? pluginLatency.load() : latencyCompensation.load();
+    recordingDiTrim = juce::jmax (0, recordingTrim - pluginLatency.load());
 
     // Pre-roll one bar: the other tracks and the click play in before the take starts.
-    if (countInEnabled.load())
+    if (countInEnabled.load() && ! reamping)
         movePlayhead (recordingStart.load() - (juce::int64) std::round (4.0 * 60.0 / tempo.load() * sampleRate.load()));
     {
         const juce::SpinLock::ScopedLockType lock (writerLock);
         activeWriter = std::move (threaded);
+        diWriter = std::move (threadedDi);
     }
     state.store (State::recording);
     return juce::Result::ok();
@@ -243,10 +311,11 @@ juce::Result MultitrackRecorder::record()
 
 void MultitrackRecorder::finishRecording()
 {
-    std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> finished;
+    std::unique_ptr<juce::AudioFormatWriter::ThreadedWriter> finished, finishedDi;
     {
         const juce::SpinLock::ScopedLockType lock (writerLock);
         finished = std::move (activeWriter);
+        finishedDi = std::move (diWriter);
     }
 
     if (finished == nullptr)
@@ -254,6 +323,19 @@ void MultitrackRecorder::finishRecording()
 
     state.store (State::playing); // keep the transport consistent while the file is finalised
     finished.reset();              // flushes the FIFO and closes the WAV
+    finishedDi.reset();
+
+    // Re-amping: the new take keeps the source take's DI.
+    juce::File diFile = recordingDiFile;
+    int diTrim = recordingDiTrim;
+    if (const int source = reampTrack.exchange (-1); source >= 0)
+    {
+        const juce::SpinLock::ScopedLockType lock (reampLock);
+        if (reampReader != nullptr)
+            diFile = reampFile, diTrim = reampDiTrim;
+        reampReader = nullptr;
+        reampDone.store (false);
+    }
 
     // Peaks were collected while recording; skip the ones covering the trimmed head.
     drainLivePeaks();
@@ -264,7 +346,7 @@ void MultitrackRecorder::finishRecording()
     peaks.erase (peaks.begin(), peaks.begin() + (std::ptrdiff_t) skipPeaks);
 
     // The recorded rig output arrives late by the round trip, so drop that much from the head.
-    if (auto take = loadTake (recordingFile, recordingStart.load(), recordingTrim, &peaks))
+    if (auto take = loadTake (recordingFile, recordingStart.load(), recordingTrim, &peaks, diFile, diTrim))
     {
         replaceTake (recordingTrack.load(), std::move (take));
         saveSession();
@@ -272,6 +354,8 @@ void MultitrackRecorder::finishRecording()
     else
     {
         recordingFile.deleteFile(); // stopped during the count-in: nothing was captured
+        if (diFile == recordingDiFile)
+            recordingDiFile.deleteFile();
     }
 
     recordingTrack = -1;
@@ -310,7 +394,7 @@ std::vector<float> MultitrackRecorder::readPeaks (juce::AudioFormatReader& reade
 }
 
 std::unique_ptr<MultitrackRecorder::Take> MultitrackRecorder::loadTake (const juce::File& file, juce::int64 start, int trimSamples,
-                                                                        std::vector<float>* knownPeaks)
+                                                                        std::vector<float>* knownPeaks, const juce::File& diFile, int diTrim)
 {
     std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (file));
     if (reader == nullptr || reader->lengthInSamples <= trimSamples)
@@ -322,6 +406,8 @@ std::unique_ptr<MultitrackRecorder::Take> MultitrackRecorder::loadTake (const ju
     take->trim = trimSamples;
     take->length = reader->lengthInSamples - trimSamples;
     take->fileChannels = (int) reader->numChannels;
+    if (diFile.existsAsFile())
+        take->diFile = diFile, take->diTrim = diTrim;
     const auto expectedPeaks = (size_t) ((take->length + samplesPerPeak - 1) / samplesPerPeak);
 
     // Peaks: collected while recording, else from the .peaks cache, else scanned (and cached).
@@ -424,6 +510,11 @@ void MultitrackRecorder::saveSession() const
             track->setAttribute ("file", take->file.getRelativePathFrom (sessionFolder));
             track->setAttribute ("start", juce::String (take->start));
             track->setAttribute ("trim", take->trim);
+            if (take->diFile != juce::File())
+            {
+                track->setAttribute ("di", take->diFile.getRelativePathFrom (sessionFolder));
+                track->setAttribute ("diTrim", take->diTrim);
+            }
         }
     }
 
@@ -459,7 +550,9 @@ juce::Result MultitrackRecorder::openSession (const juce::File& folder)
             const auto fileName = track->getStringAttribute ("file");
             if (fileName.isNotEmpty())
                 if ((loaded[(size_t) t] = loadTake (folder.getChildFile (fileName), track->getStringAttribute ("start").getLargeIntValue(),
-                                                    track->getIntAttribute ("trim", 0))) != nullptr)
+                                                    track->getIntAttribute ("trim", 0), nullptr,
+                                                    track->hasAttribute ("di") ? folder.getChildFile (track->getStringAttribute ("di")) : juce::File(),
+                                                    track->getIntAttribute ("diTrim", 0))) != nullptr)
                     ++found;
         }
     }
@@ -487,6 +580,55 @@ juce::Result MultitrackRecorder::openSession (const juce::File& folder)
     return juce::Result::ok();
 }
 
+bool MultitrackRecorder::hasDi (int track) const
+{
+    const auto* take = takes[(size_t) track].get();
+    return take != nullptr && take->diFile.existsAsFile();
+}
+
+juce::Result MultitrackRecorder::startReamp (int track)
+{
+    if (state.load() == State::recording)
+        return juce::Result::fail ("Stop the recording first.");
+    const auto* take = takes[(size_t) track].get();
+    if (take == nullptr || ! take->diFile.existsAsFile())
+        return juce::Result::fail ("This track has no DI to re-amp (record a new take first).");
+
+    std::unique_ptr<juce::AudioFormatReader> reader (formatManager.createReaderFor (take->diFile));
+    if (reader == nullptr)
+        return juce::Result::fail ("Cannot read " + take->diFile.getFileName());
+
+    stop();
+    {
+        const juce::SpinLock::ScopedLockType lock (reampLock);
+        reampReader = std::make_unique<juce::BufferingAudioReader> (reader.release(), readerThread, (int) (sampleRate.load() * 4.0));
+        reampReader->setReadTimeout (readTimeoutMs);
+        reampFile = take->diFile;
+        reampDiStart = take->start;
+        reampDiTrim = take->diTrim;
+    }
+    // Play the DI from the take's start; one extra second lets delay and reverb tails ring into the take.
+    reampEnd.store (take->start + (reampReader->lengthInSamples - take->diTrim) + pluginLatency.load() + (juce::int64) sampleRate.load());
+    reampDone.store (false);
+    reampTrack.store (track);
+    armTrack (track);
+    movePlayhead (take->start);
+    const auto result = record();
+    if (result.failed())
+    {
+        reampTrack.store (-1);
+        const juce::SpinLock::ScopedLockType lock (reampLock);
+        reampReader = nullptr;
+    }
+    return result;
+}
+
+void MultitrackRecorder::pollReamp()
+{
+    if (reampDone.load() && state.load() == State::recording)
+        stop();
+}
+
 MultitrackRecorder::TrackInfo MultitrackRecorder::getTrackInfo (int track) const
 {
     TrackInfo info;
@@ -497,6 +639,10 @@ MultitrackRecorder::TrackInfo MultitrackRecorder::getTrackInfo (int track) const
         info.length = take->length;
         info.peaks = &take->peaks;
         info.fileName = take->file.getFileName();
+        info.file = take->file;
+        info.diFile = take->diFile;
+        info.trim = take->trim;
+        info.diTrim = take->diTrim;
     }
     return info;
 }

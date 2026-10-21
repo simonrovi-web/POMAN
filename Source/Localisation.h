@@ -22,7 +22,7 @@ inline const std::vector<std::pair<const char*, const char*>>& table()
     static const std::vector<std::pair<const char*, const char*>> entries {
         // Header, pages, presets
         { "INPUT", "ENTRADA" }, { "OUTPUT", "SALIDA" }, { "RIG", "RIG" }, { "STUDIO", "ESTUDIO" }, { "DRUMS", "BATER\xc3\x8d" "A" },
-        { "LOOP", "LOOP" }, { "LIVE", "DIRECTO" }, { "SAVE", "GUARDAR" }, { "TUNER", "AFINADOR" }, { "CAL", "CAL" },
+        { "LIVE", "DIRECTO" }, { "SAVE", "GUARDAR" }, { "TUNER", "AFINADOR" }, { "CAL", "CAL" },
         { "Preset", "Preset" }, { "FACTORY", "F\xc3\x81" "BRICA" }, { "USER", "USUARIO" }, { "GUITAR AMP SUITE", "SUITE DE AMPLIFICADORES" },
         { "Save preset", "Guardar preset" }, { "Name for the new preset:", "Nombre del nuevo preset:" }, { "Save", "Guardar" },
         { "Cancel", "Cancelar" }, { "Could not save to ", "No se pudo guardar en " },
@@ -91,7 +91,10 @@ inline const std::vector<std::pair<const char*, const char*>>& table()
         { "Arm a track (R), press REC to record, STOP to keep the take.", "Arma una pista (R), pulsa REC para grabar y STOP para guardar la toma." },
         { "TRACK ", "PISTA " }, { "Arm for recording", "Armar para grabar" }, { "Mute", "Silenciar" }, { "Solo", "Solo" },
         { "Clear this track (the WAV file stays on disk)", "Vaciar esta pista (el WAV se queda en el disco)" },
-        { "COUNT-IN  ", "CUENTA  " }, { "empty", "vac\xc3\xad" "a" },
+        { "COUNT-IN  ", "CUENTA  " }, { "empty", "vac\xc3\xad" "a" }, { "REAMP", "REAMP" },
+        { "Re-amp: play this take's clean DI through the current rig and record the result as the new take",
+          "Re-amplificar: pasa la DI limpia de esta toma por el rig actual y graba el resultado como toma nueva" },
+        { "Re-amping track ", "Re-amplificando pista " }, { "Re-amp done: ", "Re-amplificado listo: " },
 
         // DRUMS
         { "I want drums", "Quiero bater\xc3\xad" "a" }, { "Custom", "Personalizado" }, { "Room ambience (Studio kit)", "Ambiente de sala (kit Studio)" },
@@ -123,6 +126,23 @@ inline const std::vector<std::pair<const char*, const char*>>& table()
           "Clic derecho en un bot\xc3\xb3n para asignar un pulsador MIDI." },
 
         // LIVE
+        { "WHAMMY", "WHAMMY" }, { "DETUNE", "DESAFINAR" },
+        { "Right-click POSITION to MIDI-learn an expression pedal. With PEDAL ON, moving the pedal "
+          "switches the whammy on, and resting at the heel for half a second switches it off",
+          "Clic derecho en POSICI\xc3\x93N para asignar un pedal de expresi\xc3\xb3n por MIDI. Con PEDAL ON, al mover el pedal "
+          "el whammy se enciende, y al dejarlo en el tal\xc3\xb3n medio segundo se apaga" },
+        { "JAM", "JAM" }, { "LOAD SONG", "CARGAR CANCI\xc3\x93N" }, { "PAUSE", "PAUSA" }, { "SPEED", "VELOCIDAD" },
+        { "PITCH", "TONO" }, { "LOOP", "BUCLE" }, { "No song loaded", "Ninguna canci\xc3\xb3n cargada" },
+        { "Choose a song", "Elige una canci\xc3\xb3n" }, { "Backing track", "Pista de acompa\xc3\xb1" "amiento" },
+        { "Set the loop start here", "Marca aqu\xc3\xad el inicio del bucle" },
+        { "Set the loop end here and loop", "Marca aqu\xc3\xad el final del bucle y repite" },
+        { "Repeat the A-B section", "Repite el tramo A-B" },
+        { "Load a song (WAV, MP3, FLAC, AIFF, OGG). SPEED slows it down without changing the pitch; PITCH changes "
+          "the key without changing the speed. Click the waveform to jump; A and B mark a section to loop. "
+          "The song is heard but never recorded into your takes.",
+          "Carga una canci\xc3\xb3n (WAV, MP3, FLAC, AIFF, OGG). VELOCIDAD la ralentiza sin cambiar el tono; TONO cambia "
+          "la tonalidad sin cambiar la velocidad. Haz clic en la onda para saltar; A y B marcan un tramo para repetir. "
+          "La canci\xc3\xb3n se oye pero nunca se graba en tus tomas." },
         { "PAGE", "P\xc3\x81GINA" }, { "LOOPER", "LOOPER" },
         { "Click a preset to load it. Right-click a switch, < or > to assign a MIDI footswitch.",
           "Haz clic en un preset para cargarlo. Clic derecho en un pulsador, < o > para asignarle un pulsador MIDI." },

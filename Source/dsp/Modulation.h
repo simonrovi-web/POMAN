@@ -1,24 +1,31 @@
 #pragma once
 
 #include "DspCommon.h"
+#include "PitchShift.h"
 
 namespace poman
 {
-// Stereo modulation pedal: chorus, flanger or tremolo.
+// Stereo modulation pedal: chorus, flanger, tremolo or detune.
 // Controls: rate, depth, mix and feedback. For the tremolo, "mix" sets the wave shape
-// (sine to square) and "feedback" the stereo phase offset (0 = mono pulse, 1 = auto-pan).
+// (sine to square) and "feedback" the stereo phase offset (0 = mono pulse, 1 = auto-pan). For the detune,
+// "depth" sets the detune (up to 15 cents, left down and right up), "mix" the blend and "rate" is unused.
 class Modulation
 {
 public:
-    enum class Type { chorus, flanger, tremolo, count };
+    enum class Type { chorus, flanger, tremolo, detune, count };
 
-    static juce::StringArray typeNames() { return { "Chorus", "Flanger", "Tremolo" }; }
+    static juce::StringArray typeNames() { return { "Chorus", "Flanger", "Tremolo", "Detune" }; }
 
     void prepare (double newSampleRate, int maxBlockSize)
     {
         sampleRate = newSampleRate;
         line.setMaximumDelayInSamples ((int) (maxDelaySeconds * sampleRate) + 4);
         line.prepare ({ sampleRate, (juce::uint32) maxBlockSize, 2 });
+        for (auto& s : detuners)
+        {
+            s.prepare (sampleRate, 0.04f);
+            s.setCrossfade (0.1f);
+        }
         depth.reset (sampleRate, 0.05);
         mix.reset (sampleRate, 0.05);
         reset();
@@ -29,6 +36,8 @@ public:
         line.reset();
         feedbackState = { 0.0f, 0.0f };
         phase = 0.0;
+        for (auto& s : detuners)
+            s.reset();
     }
 
     void setParams (Type newType, float rateHz, float newDepth, float newMix, float newFeedback)
@@ -49,6 +58,24 @@ public:
     {
         float* channels[] { left, right };
         const double increment = rate / sampleRate;
+
+        if (type == Type::detune)
+        {
+            // Two micro pitch shifters, one a little flat (left) and one a little sharp (right): the
+            // doubled-take width of a studio detune, without a chorus's sweep. Delays differ slightly too.
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float cents = 15.0f * depth.getNextValue();
+                const float m = mix.getNextValue();
+                for (int ch = 0; ch < 2; ++ch)
+                {
+                    const float ratio = std::exp2 ((ch == 0 ? -cents : cents) / 1200.0f);
+                    const float x = channels[ch][i];
+                    channels[ch][i] = (1.0f - 0.5f * m) * x + m * detuners[(size_t) ch].process (x, ratio);
+                }
+            }
+            return;
+        }
 
         if (type == Type::tremolo)
         {
@@ -117,5 +144,6 @@ private:
     float rate = 0.8f, feedback = 0.3f;
     juce::SmoothedValue<float> depth { 0.5f }, mix { 0.5f };
     std::array<float, 2> feedbackState { 0.0f, 0.0f };
+    std::array<PitchShifter, 2> detuners;
 };
 } // namespace poman

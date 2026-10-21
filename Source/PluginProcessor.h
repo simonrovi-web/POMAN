@@ -4,6 +4,7 @@
 #include <juce_dsp/juce_dsp.h>
 
 #include "dsp/Ambience.h"
+#include "dsp/BackingTrack.h"
 #include "dsp/AmpModel.h"
 #include "dsp/CabSim.h"
 #include "dsp/Compressor.h"
@@ -18,6 +19,7 @@
 #include "dsp/Octaver.h"
 #include "dsp/Overdrive.h"
 #include "dsp/Wah.h"
+#include "dsp/PitchShift.h"
 #include "PortablePaths.h"
 #include "MidiRouter.h"
 #include "PresetManager.h"
@@ -81,6 +83,7 @@ public:
     poman::MultitrackRecorder& getRecorder() { return *recorder; }
     poman::DrumMachine& getDrums() { return drums; }
     poman::Looper& getLooper() { return looper; }
+    poman::BackingTrack& getBackingTrack() { return backing; }
     // Export layer that renders the drum pattern (empty when the drums are off).
     poman::MultitrackRecorder::ExportLayer makeDrumExportLayer();
 
@@ -121,7 +124,7 @@ private:
     void processChunk (juce::AudioBuffer<float>& buffer, int startSample, int numSamples);
     enum class Param
     {
-        input, output, gateOn, gateThreshold, compOn, compSustain, compAttack, compLevel, compBlend, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, cabMix, cabLowCut, cabHighCut, eqOn, eq31, eq63, eq125, eq250, eq500, eq1k, eq2k, eq4k, eq8k, eq16k, eqLowCut, eqHighCut, eqLevel, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, modOn, modType, modRate, modDepth, modMix, modFeedback, dlyOn, dlyTime, dlyFeedback, dlyMix, dlySync, revOn, revSize, revMix, revType, revTone, wahOn, wahMode, wahPos, wahReso, wahAuto, volPedal,
+        input, output, gateOn, gateThreshold, compOn, compSustain, compAttack, compLevel, compBlend, octOn, octSub, octUp, octDry, odOn, odType, odDrive, odTone, odLevel, ampChannel, ampGain, ampBass, ampMid, ampTreble, ampPresence, ampDepth, ampMaster, cabOn, cabMic, cabMix, cabLowCut, cabHighCut, eqOn, eq31, eq63, eq125, eq250, eq500, eq1k, eq2k, eq4k, eq8k, eq16k, eqLowCut, eqHighCut, eqLevel, harmOn, harmMode, harmKey, harmScale, harmV1Steps, harmV1Level, harmV2Steps, harmV2Level, harmDry, modOn, modType, modRate, modDepth, modMix, modFeedback, dlyOn, dlyTime, dlyFeedback, dlyMix, dlySync, revOn, revSize, revMix, revType, revTone, wahOn, wahMode, wahPos, wahReso, wahAuto, volPedal, whamOn, whamMode, whamPos, whamMix, whamAuto,
         count
     };
 
@@ -134,12 +137,14 @@ private:
     poman::Compressor compressor;
     poman::Octaver octaver;
     poman::Wah wah;
+    poman::Whammy whammy;
     poman::Overdrive overdrive;
     poman::AmpModel amp;
     poman::CabSim cab;
     poman::GraphicEQ graphicEq;
     poman::DrumMachine drums;
     poman::Looper looper;
+    poman::BackingTrack backing;
     poman::NamAmp namAmp;
     // The built-in amp and the NAM path differ in latency; the shorter one is padded so the
     // reported latency stays the same whichever amp is selected.
@@ -168,7 +173,7 @@ private:
     juce::AudioBuffer<float> monoBuffer;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> inputGain { 1.0f }, outputGain { 1.0f };
     juce::SmoothedValue<float> volumePedal { 1.0f };
-    poman::PedalSwitch wahSwitch; // message thread
+    poman::PedalSwitch wahSwitch, whammySwitch; // message thread
     int maxChunkSize = 512;
 
     std::unique_ptr<poman::PresetManager> presetManager;

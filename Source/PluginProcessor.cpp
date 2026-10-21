@@ -164,6 +164,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout PomanProcessor::createParame
     addSwitch (layout, "wahAuto", "Wah Auto-Engage", true);
     addFloat (layout, "volPedal", "Volume Pedal", { 0.0f, 1.0f, 0.001f }, 1.0f);
 
+    // WHAMMY: pitch pedal; map an expression pedal to "Whammy Position".
+    addSwitch (layout, "whamOn", "Whammy On", false);
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "whamMode", 1 }, "Whammy Mode", poman::Whammy::modeNames(), 0));
+    addFloat (layout, "whamPos", "Whammy Position", { 0.0f, 1.0f, 0.001f }, 0.0f);
+    addFloat (layout, "whamMix", "Whammy Mix", { 0.0f, 1.0f, 0.001f }, 1.0f);
+    addSwitch (layout, "whamAuto", "Whammy Auto-Engage", true);
+
     return layout;
 }
 
@@ -173,7 +180,7 @@ PomanProcessor::PomanProcessor()
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PomanState", createParameterLayout())
 {
-    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "compOn", "compSustain", "compAttack", "compLevel", "compBlend", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "cabMix", "cabLowCut", "cabHighCut", "eqOn", "eq31", "eq63", "eq125", "eq250", "eq500", "eq1k", "eq2k", "eq4k", "eq8k", "eq16k", "eqLowCut", "eqHighCut", "eqLevel", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "modOn", "modType", "modRate", "modDepth", "modMix", "modFeedback", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "dlySync", "revOn", "revSize", "revMix", "revType", "revTone", "wahOn", "wahMode", "wahPos", "wahReso", "wahAuto", "volPedal" };
+    static constexpr const char* ids[] { "input", "output", "gateOn", "gateThreshold", "compOn", "compSustain", "compAttack", "compLevel", "compBlend", "octOn", "octSub", "octUp", "octDry", "odOn", "odType", "odDrive", "odTone", "odLevel", "ampChannel", "ampGain", "ampBass", "ampMid", "ampTreble", "ampPresence", "ampDepth", "ampMaster", "cabOn", "cabMic", "cabMix", "cabLowCut", "cabHighCut", "eqOn", "eq31", "eq63", "eq125", "eq250", "eq500", "eq1k", "eq2k", "eq4k", "eq8k", "eq16k", "eqLowCut", "eqHighCut", "eqLevel", "harmOn", "harmMode", "harmKey", "harmScale", "harmV1Steps", "harmV1Level", "harmV2Steps", "harmV2Level", "harmDry", "modOn", "modType", "modRate", "modDepth", "modMix", "modFeedback", "dlyOn", "dlyTime", "dlyFeedback", "dlyMix", "dlySync", "revOn", "revSize", "revMix", "revType", "revTone", "wahOn", "wahMode", "wahPos", "wahReso", "wahAuto", "volPedal", "whamOn", "whamMode", "whamPos", "whamMix", "whamAuto" };
     static_assert (std::size (ids) == (size_t) Param::count);
 
     for (size_t i = 0; i < rawParameters.size(); ++i)
@@ -210,6 +217,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     compressor.prepare (sampleRate);
     octaver.prepare (sampleRate);
     wah.prepare (sampleRate);
+    whammy.prepare (sampleRate);
     volumePedal.reset (sampleRate, 0.02);
     volumePedal.setCurrentAndTargetValue (volumeCurve (param (Param::volPedal)));
     overdrive.prepare (sampleRate, maxChunkSize);
@@ -225,6 +233,7 @@ void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     recorder->prepare (sampleRate, maxChunkSize);
     drums.prepare (sampleRate);
     looper.prepare (sampleRate);
+    backing.prepare (sampleRate);
     tuner.prepare (sampleRate);
 
     inputGain.reset (sampleRate, 0.03);
@@ -246,6 +255,7 @@ void PomanProcessor::updateParameters()
     wah.setParams (param (Param::wahMode) > 0.5f ? poman::Wah::Mode::autoWah : poman::Wah::Mode::pedal,
                    param (Param::wahPos), param (Param::wahReso));
     volumePedal.setTargetValue (volumeCurve (param (Param::volPedal)));
+    whammy.setParams (juce::roundToInt (param (Param::whamMode)), param (Param::whamPos), param (Param::whamMix));
     overdrive.setParams ((poman::Overdrive::Type) juce::jlimit (0, (int) poman::Overdrive::Type::count - 1, (int) param (Param::odType)),
                          param (Param::odDrive), param (Param::odTone), param (Param::odLevel));
 
@@ -324,6 +334,10 @@ void PomanProcessor::handleMidi()
                 && wahSwitch.pedalMoved (value, enabled (Param::wahOn), enabled (Param::wahAuto), juce::Time::getMillisecondCounterHiRes())
                        == poman::PedalSwitch::Change::switchOn)
                 apvts.getParameter ("wahOn")->setValueNotifyingHost (1.0f);
+            if (target == "whamPos"
+                && whammySwitch.pedalMoved (value, enabled (Param::whamOn), enabled (Param::whamAuto), juce::Time::getMillisecondCounterHiRes())
+                       == poman::PedalSwitch::Change::switchOn)
+                apvts.getParameter ("whamOn")->setValueNotifyingHost (1.0f);
         },
         [this] (int program)
         {
@@ -333,6 +347,9 @@ void PomanProcessor::handleMidi()
     if (wahSwitch.tick (param (Param::wahPos), enabled (Param::wahOn), juce::Time::getMillisecondCounterHiRes())
         == poman::PedalSwitch::Change::switchOff)
         apvts.getParameter ("wahOn")->setValueNotifyingHost (0.0f);
+    if (whammySwitch.tick (param (Param::whamPos), enabled (Param::whamOn), juce::Time::getMillisecondCounterHiRes())
+        == poman::PedalSwitch::Change::switchOff)
+        apvts.getParameter ("whamOn")->setValueNotifyingHost (0.0f);
 }
 
 void PomanProcessor::performAction (const juce::String& name)
@@ -391,6 +408,9 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
         rawPeak = juce::jmax (rawPeak, std::abs (raw));
         mono[i] = raw * inputGain.getNextValue();
     }
+    // Re-amping replaces the guitar with a recorded DI; otherwise the clean guitar is kept as the DI.
+    if (! recorder->readDi (mono, numSamples))
+        recorder->captureDi (mono, numSamples);
     for (float previous = rawInputPeak.load(); rawPeak > previous && ! rawInputPeak.compare_exchange_weak (previous, rawPeak);) {}
 
     const auto blockPeak = [] (const float* data, int n)
@@ -422,6 +442,8 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
         compressor.process (mono, numSamples);
     if (enabled (Param::wahOn))
         wah.process (mono, numSamples);
+    if (enabled (Param::whamOn))
+        whammy.process (mono, numSamples);
     if (enabled (Param::octOn))
         octaver.process (mono, numSamples);
     if (enabled (Param::odOn))
@@ -498,6 +520,9 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
 
     // Records the finished rig sound, then layers the other tracks and the click on top.
     recorder->process (left, right, numSamples);
+
+    // The backing track (JAM page) is heard but never recorded into a guitar take.
+    backing.process (left, right, numSamples);
 
     // Drums follow the studio transport and sit on top of the recording, so they are never
     // captured into a guitar take. When stopped, ringing hits just decay.
@@ -628,6 +653,7 @@ void PomanProcessor::updateLatency()
     namPathPad.store (pathLatency - namLatency);
     setLatencySamples (pathLatency + overdrive.getLatencySamples()); // the drive oversampler is always in the path
     gate.setPathLatency (getLatencySamples()); // detection point to the gate's cut, after the amp
+    recorder->setPluginLatency (getLatencySamples());
 }
 
 void PomanProcessor::getStateInformation (juce::MemoryBlock& destData)
@@ -638,6 +664,18 @@ void PomanProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.appendChild (drums.toValueTree(), nullptr);
     state.appendChild (midiRouter.toValueTree(), nullptr); // MIDI map is global, not part of presets
     state.setProperty (looperSyncProperty, looper.isSynced(), nullptr);
+    if (backing.isLoaded())
+    {
+        juce::ValueTree b ("Backing");
+        b.setProperty ("file", backing.getFile().getFullPathName(), nullptr);
+        b.setProperty ("speed", backing.getSpeed(), nullptr);
+        b.setProperty ("semitones", backing.getSemitones(), nullptr);
+        b.setProperty ("volume", backing.getVolume(), nullptr);
+        b.setProperty ("loopStart", backing.getLoopStart(), nullptr);
+        b.setProperty ("loopEnd", backing.getLoopEnd(), nullptr);
+        b.setProperty ("looping", backing.isLooping(), nullptr);
+        state.appendChild (b, nullptr);
+    }
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -676,6 +714,19 @@ void PomanProcessor::setStateInformation (const void* data, int sizeInBytes)
     {
         looper.setSync ((bool) state.getProperty (looperSyncProperty));
         state.removeProperty (looperSyncProperty, nullptr);
+    }
+    // The backing track's song and practice settings travel with the session (not with presets).
+    if (const auto b = state.getChildWithName ("Backing"); b.isValid())
+    {
+        const juce::File song (b.getProperty ("file").toString());
+        if (song.existsAsFile() && song != backing.getFile() && backing.load (song).wasOk())
+        {
+            backing.setSpeed ((double) b.getProperty ("speed", 1.0));
+            backing.setSemitones ((int) b.getProperty ("semitones", 0));
+            backing.setVolume ((float) b.getProperty ("volume", 0.8f));
+            backing.setLoop ((double) b.getProperty ("loopStart", 0.0), (double) b.getProperty ("loopEnd", 0.0), (bool) b.getProperty ("looping", false));
+        }
+        state.removeChild (b, nullptr);
     }
     const auto midiState = state.getChildWithName ("MidiMap");
     if (midiState.isValid())

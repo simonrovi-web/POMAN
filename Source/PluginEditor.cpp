@@ -243,6 +243,18 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     reverbSection = &addSection ("REVERB", palette::pressure, "revOn",
                 { &addKnob ("revSize", "SIZE"), &addKnob ("revTone", "TONE"), &addKnob ("revMix", "MIX") });
 
+    whammySection = &addSection ("WHAMMY", palette::aurora, "whamOn", { &addKnob ("whamPos", "POSITION"), &addKnob ("whamMix", "MIX") });
+    whammyModeBox.addItemList (poman::Whammy::modeNames(), 1);
+    whammyModeBox.setColour (juce::ComboBox::outlineColourId, palette::aurora.withAlpha (0.6f));
+    whammyModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (processor.apvts, "whamMode", whammyModeBox);
+    addAndMakeVisible (whammyModeBox);
+    whammyAutoButton.setClickingTogglesState (true);
+    whammyAutoButton.setColour (juce::TextButton::buttonOnColourId, palette::aurora.withAlpha (0.7f));
+    whammyAutoButton.setTooltip ("Right-click POSITION to MIDI-learn an expression pedal. With PEDAL ON, moving the pedal "
+                                 "switches the whammy on, and resting at the heel for half a second switches it off");
+    whammyAutoAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (processor.apvts, "whamAuto", whammyAutoButton);
+    addAndMakeVisible (whammyAutoButton);
+
     harmIntervalKnobs = { &addKnob ("harmV1Steps", "VOICE 1"), &addKnob ("harmV2Steps", "VOICE 2") };
     harmonizerSection = &addSection ("HARMONIZER", palette::aurora, "harmOn",
                                      { harmIntervalKnobs[0], &addKnob ("harmV1Level", "V1 LEVEL"),
@@ -377,8 +389,10 @@ PomanEditor::PomanEditor (PomanProcessor& p)
                                                [this] (const juce::String& target, juce::Component& anchor) { showMidiMenu (target, anchor); },
                                                [this] { return lastTunerReading; });
         addChildComponent (*liveView);
+        jamView = std::make_unique<JamView> (processor.getBackingTrack());
+        addChildComponent (*jamView);
 
-        for (auto* b : { &rigPageButton, &studioPageButton, &drumsPageButton, &loopPageButton, &livePageButton })
+        for (auto* b : { &rigPageButton, &studioPageButton, &drumsPageButton, &loopPageButton, &livePageButton, &jamPageButton })
         {
             b->setRadioGroupId (1001);
             b->setClickingTogglesState (true);
@@ -391,6 +405,7 @@ PomanEditor::PomanEditor (PomanProcessor& p)
         drumsPageButton.onClick = [this] { showPage (Page::drums); };
         loopPageButton.onClick = [this] { showPage (Page::loop); };
         livePageButton.onClick = [this] { showPage (Page::live); };
+        jamPageButton.onClick = [this] { showPage (Page::jam); };
     }
 
     languageButton.setTooltip ("Language / Idioma");
@@ -479,6 +494,7 @@ void PomanEditor::showPage (Page page)
     drumView->setVisible (page == Page::drums);
     loopView->setVisible (page == Page::loop);
     liveView->setVisible (page == Page::live);
+    jamView->setVisible (page == Page::jam);
     if (page == Page::studio)
         studioView->toFront (false);
     else if (page == Page::drums)
@@ -487,6 +503,8 @@ void PomanEditor::showPage (Page page)
         loopView->toFront (false);
     else if (page == Page::live)
         liveView->toFront (false);
+    else if (page == Page::jam)
+        jamView->toFront (false);
     else if (tunerDisplay.isVisible())
         tunerDisplay.toFront (false);
 }
@@ -896,8 +914,16 @@ void PomanEditor::refreshModLabels()
 
     shownModType = type;
     const bool tremolo = type == (int) poman::Modulation::Type::tremolo;
+    const bool detune = type == (int) poman::Modulation::Type::detune;
     modVariableKnobs[0]->baseName = tremolo ? "SHAPE" : "MIX";
     modVariableKnobs[1]->baseName = tremolo ? "STEREO" : "FDBK";
+    modSection->knobs[1]->baseName = detune ? "DETUNE" : "DEPTH";
+    // The detune has no sweep and no regeneration: RATE and FDBK do nothing there.
+    for (auto* k : { modSection->knobs[0], modVariableKnobs[1] })
+    {
+        k->slider.setEnabled (! detune);
+        k->slider.setAlpha (detune ? 0.35f : 1.0f);
+    }
 }
 
 void PomanEditor::refreshHarmonizerInfo()
@@ -1094,16 +1120,14 @@ void PomanEditor::resized()
 
     header.removeFromLeft (sc (104)); // the logo
     languageButton.setBounds (header.removeFromLeft (sc (32)).withSizeKeepingCentre (sc (30), sc (22)));
-    header.removeFromLeft (sc (studioView != nullptr ? 4 : 134));
+    header.removeFromLeft (sc (studioView != nullptr ? 24 : 134));
     if (studioView != nullptr)
     {
-        auto pages = header.removeFromLeft (sc (326)).withSizeKeepingCentre (sc (326), sc (30));
-        rigPageButton.setBounds (pages.removeFromLeft (sc (48)).reduced (sc (2), 0));
-        studioPageButton.setBounds (pages.removeFromLeft (sc (72)).reduced (sc (2), 0));
-        drumsPageButton.setBounds (pages.removeFromLeft (sc (74)).reduced (sc (2), 0));
-        loopPageButton.setBounds (pages.removeFromLeft (sc (58)).reduced (sc (2), 0));
-        livePageButton.setBounds (pages.reduced (sc (2), 0));
-        header.removeFromLeft (sc (6));
+        // Page tabs on their own row under the header.
+        auto tabs = area.removeFromTop (sc (tabsHeight)).withTrimmedBottom (sc (6));
+        for (auto [button, width] : { std::pair { &rigPageButton, 70 }, std::pair { &studioPageButton, 96 }, std::pair { &drumsPageButton, 96 },
+                                      std::pair { &loopPageButton, 80 }, std::pair { &livePageButton, 96 }, std::pair { &jamPageButton, 80 } })
+            button->setBounds (tabs.removeFromLeft (sc (width)).reduced (sc (2), 0));
     }
     auto presetRow = header.withSizeKeepingCentre (header.getWidth(), sc (30));
     tunerButton.setBounds (presetRow.removeFromRight (sc (78)).reduced (sc (3), 0));
@@ -1140,7 +1164,7 @@ void PomanEditor::resized()
     placeRow (pedals, { gateSection, compSection, wahSection, octaveSection, driveSection }, { 3, 6, 6, 5, 6 });
     placeRow (ampRow, { ampSection }, { 1 });
     placeRow (eqRow, { eqSection }, { 1 });
-    placeRow (harmRow, { harmonizerSection, modSection }, { 3, 2 });
+    placeRow (harmRow, { harmonizerSection, whammySection, modSection }, { 6, 4, 3 });
     placeRow (fxRow, { cabSection, delaySection, reverbSection }, { 4, 3, 2 });
 
     for (auto& s : sections)
@@ -1187,6 +1211,12 @@ void PomanEditor::resized()
         if (s.get() == modSection)
             modTypeBox.setBounds (titleBar.removeFromRight (sc (120)).reduced (sc (2), sc (1)));
 
+        if (s.get() == whammySection)
+        {
+            whammyModeBox.setBounds (titleBar.removeFromRight (sc (92)).reduced (sc (2), sc (1)));
+            whammyAutoButton.setBounds (titleBar.removeFromRight (sc (66)).reduced (sc (2), sc (1)));
+        }
+
         if (s.get() == wahSection)
         {
             wahModeBox.setBounds (titleBar.removeFromRight (sc (78)).reduced (sc (2), sc (1)));
@@ -1198,9 +1228,9 @@ void PomanEditor::resized()
 
         if (s.get() == harmonizerSection)
         {
-            harmScaleBox.setBounds (titleBar.removeFromRight (sc (150)).reduced (sc (2), sc (1)));
-            harmKeyBox.setBounds (titleBar.removeFromRight (sc (70)).reduced (sc (2), sc (1)));
-            harmModeBox.setBounds (titleBar.removeFromRight (sc (110)).reduced (sc (2), sc (1)));
+            harmScaleBox.setBounds (titleBar.removeFromRight (sc (134)).reduced (sc (2), sc (1)));
+            harmKeyBox.setBounds (titleBar.removeFromRight (sc (54)).reduced (sc (2), sc (1)));
+            harmModeBox.setBounds (titleBar.removeFromRight (sc (96)).reduced (sc (2), sc (1)));
             harmInfoLabel.setBounds (inner.removeFromRight (sc (150)).reduced (sc (6), sc (22)));
         }
 
@@ -1221,9 +1251,8 @@ void PomanEditor::resized()
 
     if (studioView != nullptr)
     {
-        studioView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
-        drumView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
-        loopView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
-        liveView->setBounds (getLocalBounds().withTrimmedTop (sc (64)));
+        const auto pageArea = getLocalBounds().withTrimmedTop (sc (headerHeight + tabsHeight));
+        for (auto* view : std::initializer_list<juce::Component*> { studioView.get(), drumView.get(), loopView.get(), liveView.get(), jamView.get() })
+            view->setBounds (pageArea);
     }
 }

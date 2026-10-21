@@ -65,7 +65,10 @@ int main()
         expect (info.hasAudio, "take loaded after stop");
         expect (info.length == (juce::int64) sampleRate - 1000, "take trimmed by latency compensation",
                 juce::String (info.length) + " samples");
-        expect (root.findChildFiles (juce::File::findFiles, true, "*.wav").size() == 1, "WAV file written to session folder");
+        // The take and its clean DI.
+        expect (root.findChildFiles (juce::File::findFiles, true, "*.wav").size() == 2
+                    && root.findChildFiles (juce::File::findFiles, true, "* DI.wav").size() == 1,
+                "WAV files (take + DI) written to session folder");
         // Waveform peaks come from the recording itself and are cached beside the WAV.
         const auto expectedPeaks = (size_t) ((info.length + poman::MultitrackRecorder::samplesPerPeak - 1) / poman::MultitrackRecorder::samplesPerPeak);
         expect (info.peaks != nullptr && info.peaks->size() == expectedPeaks && root.findChildFiles (juce::File::findFiles, true, "*.peaks").size() == 1,
@@ -307,6 +310,100 @@ int main()
                     + ", memory +" + juce::String (grown, 1) + " MB");
     }
 
+
+    // DI capture and re-amping. A "rig" with 64 samples of latency; the device adds 500 more.
+    {
+        constexpr int rigLatency = 64;
+        poman::MultitrackRecorder recorder (root.getChildFile ("reamp"));
+        recorder.prepare (sampleRate, blockSize);
+        recorder.setReadTimeoutMs (2000);
+        recorder.setCountIn (false);
+        recorder.setPluginLatency (rigLatency);
+        recorder.setLatencyCompensation (rigLatency + 500);
+
+        const auto guitar = [] (juce::int64 n) // an arbitrary, non-periodic signal
+        {
+            return 0.3f * (float) (std::sin (0.013 * (double) n) * std::sin (0.00071 * (double) n * (1.0 + 0.0001 * (double) n)));
+        };
+        std::vector<float> delayLine (rigLatency, 0.0f);
+        int delayPos = 0;
+        juce::int64 clock = 0; // samples since the device started
+        // One audio block as the processor runs it: DI in (or the recording when re-amping), the rig, the recorder.
+        const auto block = [&] (float rigGain)
+        {
+            std::vector<float> mono (blockSize), l (blockSize), r (blockSize);
+            if (! recorder.readDi (mono.data(), blockSize))
+            {
+                for (int i = 0; i < blockSize; ++i)
+                    mono[(size_t) i] = guitar (clock + i);
+                recorder.captureDi (mono.data(), blockSize);
+            }
+            for (int i = 0; i < blockSize; ++i)
+            {
+                const float delayed = delayLine[(size_t) delayPos];
+                delayLine[(size_t) delayPos] = mono[(size_t) i];
+                delayPos = (delayPos + 1) % rigLatency;
+                l[(size_t) i] = r[(size_t) i] = rigGain * delayed;
+            }
+            recorder.process (l.data(), r.data(), blockSize);
+            clock += blockSize;
+        };
+
+        recorder.armTrack (1);
+        recorder.setPlayhead (12000);
+        recorder.record();
+        for (int b = 0; b < (int) sampleRate / blockSize; ++b)
+            block (1.0f);
+        recorder.stop();
+
+        // Reads a take or DI file (left channel) from its trim on, as the timeline sees it.
+        const auto readAligned = [] (const juce::File& f, int trim, int count)
+        {
+            juce::AudioFormatManager fm;
+            fm.registerBasicFormats();
+            std::unique_ptr<juce::AudioFormatReader> reader (fm.createReaderFor (f));
+            juce::AudioBuffer<float> b (2, count);
+            b.clear();
+            if (reader != nullptr)
+                reader->read (&b, 0, count, trim, true, true);
+            return b;
+        };
+        const auto first = recorder.getTrackInfo (1);
+        const int span = (int) sampleRate / 2;
+        const auto take = readAligned (first.file, first.trim, span);
+        const auto di = readAligned (first.diFile, first.diTrim, span);
+        float worst = 0.0f;
+        for (int i = 0; i < span; ++i)
+            worst = juce::jmax (worst, std::abs (take.getSample (0, i) - di.getSample (0, i)));
+        expect (first.diFile.existsAsFile() && recorder.hasDi (1) && worst < 1.0e-4f && first.diTrim == 500,
+                "take records an aligned DI", "DI trim " + juce::String (first.diTrim) + ", max diff " + juce::String (worst, 6));
+
+        // Re-amp through a different "rig" (half the level): the new take is that rig applied to the DI, in place.
+        const auto start = recorder.startReamp (1);
+        int blocks = 0;
+        while (recorder.isReamping() && blocks < 2000)
+        {
+            block (0.5f);
+            recorder.pollReamp(); // the UI timer's job
+            ++blocks;
+        }
+        const auto second = recorder.getTrackInfo (1);
+        const auto reamped = readAligned (second.file, second.trim, span);
+        float worstReamp = 0.0f;
+        for (int i = 0; i < span; ++i)
+            worstReamp = juce::jmax (worstReamp, std::abs (reamped.getSample (0, i) - 0.5f * di.getSample (0, i)));
+        expect (start.wasOk() && ! recorder.isReamping() && second.file != first.file && second.start == first.start
+                    && second.diFile == first.diFile && second.trim == rigLatency && worstReamp < 1.0e-4f,
+                "re-amp replaces the take in place",
+                "stopped by itself after " + juce::String (blocks) + " blocks, max diff " + juce::String (worstReamp, 6));
+
+        // The DI link survives saving and reopening the session.
+        recorder.saveSession();
+        poman::MultitrackRecorder reopened (root.getChildFile ("other"));
+        reopened.prepare (sampleRate, blockSize);
+        reopened.openSession (recorder.getSessionFolder());
+        expect (reopened.hasDi (1) && reopened.getTrackInfo (1).diTrim == 500, "DI link saved in the session");
+    }
     root.deleteRecursively();
     return failures;
 }
