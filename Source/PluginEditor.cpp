@@ -321,6 +321,9 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     tunerButton.setClickingTogglesState (true);
     tunerButton.setColour (juce::TextButton::buttonOnColourId, palette::kelp);
     tunerButton.onClick = [this] { setTunerVisible (tunerButton.getToggleState()); };
+    tunerButton.onRightClick = [this] { showMidiMenu ("action:tuner", tunerButton); };
+    previousPresetButton.onRightClick = [this] { showMidiMenu ("action:presetPrev", previousPresetButton); };
+    nextPresetButton.onRightClick = [this] { showMidiMenu ("action:presetNext", nextPresetButton); };
     addAndMakeVisible (tunerButton);
     addChildComponent (tunerDisplay);
 
@@ -419,6 +422,67 @@ void PomanEditor::showPage (Page page)
         tunerDisplay.toFront (false);
 }
 
+void PomanEditor::showMidiMenu (const juce::String& target, juce::Component& anchor)
+{
+    auto& router = processor.getMidiRouter();
+    const int cc = router.getCcFor (target);
+    const bool learningThis = router.getLearnTarget() == target;
+
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("MIDI");
+    menu.addItem (1, learningThis ? "Cancel MIDI learn" : "MIDI learn: move a knob, pedal or footswitch");
+    if (cc >= 0)
+        menu.addItem (2, "Forget CC " + juce::String (cc));
+    menu.addItem (3, "Forget all MIDI mappings", router.hasMappings());
+    menu.addSeparator();
+    menu.addItem (4, "Program Change n loads preset n (always on)", false);
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&anchor),
+                        [this, target, learningThis] (int result)
+                        {
+                            auto& r = processor.getMidiRouter();
+                            if (result == 1)
+                                learningThis ? r.cancelLearn() : r.learn (target);
+                            else if (result == 2)
+                                r.forget (target);
+                            else if (result == 3)
+                                r.forgetAll();
+                            refreshMidiLabels();
+                        });
+}
+
+void PomanEditor::refreshMidiLabels()
+{
+    const auto& router = processor.getMidiRouter();
+    const auto learning = router.getLearnTarget();
+    const bool blinkOn = (juce::Time::getMillisecondCounter() / 300) % 2 == 0;
+
+    for (auto& k : knobs)
+    {
+        const int cc = router.getCcFor (k->paramId);
+        const auto text = learning == k->paramId ? juce::String ("LEARN...") : k->baseName + (cc >= 0 ? " [" + juce::String (cc) + "]" : juce::String());
+        if (k->label.getText() != text)
+            k->label.setText (text, juce::dontSendNotification);
+        k->label.setColour (juce::Label::textColourId, learning == k->paramId ? (blinkOn ? palette::kelp : palette::text)
+                                                                              : palette::dimText);
+        k->slider.setTooltip (cc >= 0 ? "MIDI CC " + juce::String (cc) + " (right-click for MIDI)" : "Right-click for MIDI learn");
+    }
+
+    const auto markButton = [&] (juce::Button& b, const juce::String& target)
+    {
+        const int cc = router.getCcFor (target);
+        b.setTooltip (learning == target ? "Waiting for a MIDI controller..."
+                                         : (cc >= 0 ? "MIDI CC " + juce::String (cc) : juce::String ("Right-click for MIDI learn")));
+        b.setAlpha (learning == target && ! blinkOn ? 0.4f : 1.0f);
+    };
+    for (auto& s : sections)
+        if (s->power != nullptr)
+            markButton (*s->power, s->powerParamId);
+    markButton (tunerButton, "action:tuner");
+    markButton (previousPresetButton, "action:presetPrev");
+    markButton (nextPresetButton, "action:presetNext");
+}
+
 void PomanEditor::setTunerVisible (bool visible)
 {
     processor.setTunerActive (visible);
@@ -429,6 +493,14 @@ void PomanEditor::setTunerVisible (bool visible)
 
 void PomanEditor::timerCallback()
 {
+    // The tuner can also be toggled from a MIDI footswitch.
+    if (processor.isTunerActive() != tunerDisplay.isVisible())
+    {
+        tunerButton.setToggleState (processor.isTunerActive(), juce::dontSendNotification);
+        setTunerVisible (processor.isTunerActive());
+    }
+    refreshMidiLabels();
+
     inputMeter.pushPeak (processor.takeInputPeak());
     outputMeter.pushPeak (processor.takeOutputPeak());
 
@@ -646,6 +718,9 @@ PomanEditor::Knob& PomanEditor::addKnob (const juce::String& paramId, const juce
     knob->slider.setNumDecimalPlacesToDisplay (1);
 
     knob->label.setText (name, juce::dontSendNotification);
+    knob->paramId = paramId;
+    knob->baseName = name;
+    knob->slider.onRightClick = [this, id = paramId, s = &knob->slider] { showMidiMenu (id, *s); };
     knob->label.setJustificationType (juce::Justification::centred);
     knob->label.setFont (juce::FontOptions (12.0f, juce::Font::bold));
 
@@ -668,7 +743,9 @@ PomanEditor::Section& PomanEditor::addSection (const juce::String& title, juce::
 
     if (powerParamId.isNotEmpty())
     {
-        section->power = std::make_unique<juce::ToggleButton>();
+        section->power = std::make_unique<MidiToggle>();
+        section->powerParamId = powerParamId;
+        section->power->onRightClick = [this, id = powerParamId, b = section->power.get()] { showMidiMenu (id, *b); };
         section->power->setColour (juce::ToggleButton::tickColourId, accent);
         section->powerAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
             processor.apvts, powerParamId, *section->power);
@@ -746,8 +823,8 @@ void PomanEditor::refreshModLabels()
 
     shownModType = type;
     const bool tremolo = type == (int) poman::Modulation::Type::tremolo;
-    modVariableKnobs[0]->label.setText (tremolo ? "SHAPE" : "MIX", juce::dontSendNotification);
-    modVariableKnobs[1]->label.setText (tremolo ? "STEREO" : "FDBK", juce::dontSendNotification);
+    modVariableKnobs[0]->baseName = tremolo ? "SHAPE" : "MIX";
+    modVariableKnobs[1]->baseName = tremolo ? "STEREO" : "FDBK";
 }
 
 void PomanEditor::refreshHarmonizerInfo()

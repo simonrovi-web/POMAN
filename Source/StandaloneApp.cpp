@@ -123,7 +123,9 @@ public:
         if (! settings->containsKey ("shouldMuteInput"))
             settings->setValue ("shouldMuteInput", false);
 
-        auto holder = std::make_unique<juce::StandalonePluginHolder> (settings.get(), false);
+        // Opens every MIDI input so a footswitch or controller works without visiting the settings.
+        auto holder = std::make_unique<juce::StandalonePluginHolder> (settings.get(), false, juce::String(), nullptr,
+                                                                      juce::Array<juce::StandalonePluginHolder::PluginInOuts>(), true);
 
         if (firstRun)
             preferLowLatencyDevice (holder->deviceManager);

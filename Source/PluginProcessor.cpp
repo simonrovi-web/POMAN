@@ -179,6 +179,8 @@ PomanProcessor::PomanProcessor()
 
     presetManager = std::make_unique<poman::PresetManager> (
         apvts, wrapperType == wrapperType_Standalone, [this] (const juce::ValueTree& state) { applyState (state); });
+
+    midiTimer.startTimerHz (100);
 }
 
 bool PomanProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -282,9 +284,41 @@ double PomanProcessor::getCurrentBpm() const
     return host > 0.0 ? host : recorder->getBpm();
 }
 
-void PomanProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+void PomanProcessor::handleMidi()
+{
+    midiRouter.dispatch (
+        [this] (const juce::String& target, float value, bool pressed)
+        {
+            if (target.startsWith (poman::MidiRouter::actionPrefix))
+            {
+                if (pressed)
+                    performAction (target.fromFirstOccurrenceOf (poman::MidiRouter::actionPrefix, false, false));
+                return;
+            }
+            if (auto* p = apvts.getParameter (target))
+                p->setValueNotifyingHost (dynamic_cast<juce::AudioParameterBool*> (p) != nullptr ? (value >= 0.5f ? 1.0f : 0.0f) : value);
+        },
+        [this] (int program)
+        {
+            if (program < presetManager->getPresetNames().size()) // PC n = preset n in the list (factory first)
+                presetManager->loadPreset (program);
+        });
+}
+
+void PomanProcessor::performAction (const juce::String& name)
+{
+    if (name == "tuner")
+        setTunerActive (! isTunerActive());
+    else if (name == "presetNext")
+        presetManager->loadNext();
+    else if (name == "presetPrev")
+        presetManager->loadPrevious();
+}
+
+void PomanProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
+    midiRouter.push (midi); // only copied here; applied on the message thread
 
     for (auto ch = getTotalNumInputChannels(); ch < getTotalNumOutputChannels(); ++ch)
         buffer.clear (ch, 0, buffer.getNumSamples());
@@ -518,6 +552,7 @@ void PomanProcessor::getStateInformation (juce::MemoryBlock& destData)
     // (which save apvts.state) never carry a drum pattern.
     auto state = apvts.copyState();
     state.appendChild (drums.toValueTree(), nullptr);
+    state.appendChild (midiRouter.toValueTree(), nullptr); // MIDI map is global, not part of presets
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -551,6 +586,12 @@ void PomanProcessor::setStateInformation (const void* data, int sizeInBytes)
     {
         drums.fromValueTree (drumState);
         state.removeChild (drumState, nullptr);
+    }
+    const auto midiState = state.getChildWithName ("MidiMap");
+    if (midiState.isValid())
+    {
+        midiRouter.fromValueTree (midiState);
+        state.removeChild (midiState, nullptr);
     }
     applyState (state);
 }

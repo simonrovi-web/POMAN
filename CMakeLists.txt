@@ -22,7 +22,7 @@ juce_add_plugin(POMAN
     PLUGIN_CODE Pmn1
     FORMATS VST3 Standalone
     IS_SYNTH FALSE
-    NEEDS_MIDI_INPUT FALSE
+    NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
@@ -119,3 +119,9 @@ target_sources(POMANIrGen PRIVATE Tools/IrGen.cpp)
 target_include_directories(POMANIrGen PRIVATE Source)
 target_compile_definitions(POMANIrGen PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 target_link_libraries(POMANIrGen PRIVATE juce::juce_dsp juce::juce_audio_formats PUBLIC juce::juce_recommended_config_flags)
+
+juce_add_console_app(POMANMidiTests PRODUCT_NAME "POMANMidiTests")
+target_sources(POMANMidiTests PRIVATE Tests/MidiTest.cpp)
+target_include_directories(POMANMidiTests PRIVATE Source)
+target_compile_definitions(POMANMidiTests PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_link_libraries(POMANMidiTests PRIVATE juce::juce_audio_basics juce::juce_data_structures PUBLIC juce::juce_recommended_config_flags)

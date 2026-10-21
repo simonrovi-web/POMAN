@@ -17,6 +17,7 @@
 #include "dsp/Octaver.h"
 #include "dsp/Overdrive.h"
 #include "PortablePaths.h"
+#include "MidiRouter.h"
 #include "PresetManager.h"
 #include "Tuner.h"
 #include "recorder/MultitrackRecorder.h"
@@ -36,7 +37,7 @@ public:
     bool hasEditor() const override { return true; }
 
     const juce::String getName() const override { return "POMAN"; }
-    bool acceptsMidi() const override { return false; }
+    bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 4.0; }
@@ -91,6 +92,11 @@ public:
 
     // While the tuner is open the output is muted, like a tuner pedal.
     void setTunerActive (bool active) { tunerActive.store (active); }
+    bool isTunerActive() const { return tunerActive.load(); }
+
+    // MIDI learn / Program Change (message thread). Actions are MidiRouter targets named "action:<name>".
+    poman::MidiRouter& getMidiRouter() { return midiRouter; }
+    void performAction (const juce::String& name);
     poman::TunerReading analyseTuner() { return tuner.analyse(); }
 
     // Harmonizer state for the UI: tracked input note (-1 none) and each voice's interval in semitones.
@@ -153,6 +159,15 @@ private:
     int maxChunkSize = 512;
 
     std::unique_ptr<poman::PresetManager> presetManager;
+
+    poman::MidiRouter midiRouter;
+    void handleMidi(); // message thread, ~100 Hz
+    struct MidiTimer : juce::Timer
+    {
+        explicit MidiTimer (PomanProcessor& p) : owner (p) {}
+        void timerCallback() override { owner.handleMidi(); }
+        PomanProcessor& owner;
+    } midiTimer { *this };
     std::unique_ptr<poman::MultitrackRecorder> recorder;
     poman::Tuner tuner;
     std::atomic<bool> tunerActive { false };

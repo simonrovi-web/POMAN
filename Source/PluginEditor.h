@@ -4,6 +4,7 @@
 #include "PluginProcessor.h"
 #include "StudioView.h"
 #include "DrumView.h"
+#include "RightClickable.h"
 
 class PomanLookAndFeel : public juce::LookAndFeel_V4
 {
@@ -71,8 +72,9 @@ public:
 private:
     struct Knob
     {
-        juce::Slider slider;
+        MidiSlider slider;
         juce::Label label;
+        juce::String paramId, baseName; // the label shows baseName plus its MIDI CC
         std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> attachment;
     };
 
@@ -80,7 +82,8 @@ private:
     {
         juce::String title;
         juce::Colour accent;
-        std::unique_ptr<juce::ToggleButton> power;
+        std::unique_ptr<MidiToggle> power;
+        juce::String powerParamId;
         std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> powerAttachment;
         std::vector<Knob*> knobs;
         juce::Rectangle<int> bounds;
@@ -95,6 +98,8 @@ private:
     void refreshPresetBox();
     void showSavePresetDialog();
     void setTunerVisible (bool visible);
+    void showMidiMenu (const juce::String& target, juce::Component& anchor);
+    void refreshMidiLabels();
     juce::String intervalName (int steps) const;
     void refreshHarmonizerInfo();
     void timerCallback() override;
@@ -160,8 +165,9 @@ private:
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     juce::ComboBox presetBox;
-    juce::TextButton previousPresetButton { "<" }, nextPresetButton { ">" }, savePresetButton { "SAVE" };
-    juce::TextButton tunerButton { "TUNER" };
+    MidiTextButton previousPresetButton { "<" }, nextPresetButton { ">" };
+    juce::TextButton savePresetButton { "SAVE" };
+    MidiTextButton tunerButton { "TUNER" };
     std::unique_ptr<juce::AlertWindow> saveDialog;
     juce::String shownPresetName;
 
