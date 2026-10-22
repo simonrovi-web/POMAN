@@ -203,6 +203,9 @@ private:
     int shownInputChannels = -1;
     void refreshInputSourceBox();
 
+    juce::Image logoBanner;
+    juce::Rectangle<int> logoArea;
+
     // EN / ES: switches the interface language (saved for next time).
     juce::TextButton languageButton;
     void applyLanguage();

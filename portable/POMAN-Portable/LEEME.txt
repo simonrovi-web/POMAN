@@ -1,8 +1,14 @@
-POMAN - Guitar Amp Suite (version portable 0.15.1)
+POMAN - Guitar Amp Suite (version portable 0.16.0)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.16.0
+- Interfaz nueva de estilo rockero con el logo de POMAN: tolex negro,
+  paneles de cuero con tornillos, mandos de laton, pilotos tipo joya y
+  brillo ambar de valvula. El logo esta en la cabecera, la insignia es el
+  icono de la aplicacion y aparece de fondo en la pagina DIRECTO.
 
 Novedades 0.15.1
 - Interfaces con varias entradas: antes POMAN sumaba todas las entradas

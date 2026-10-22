@@ -1,6 +1,7 @@
 #include "LoopView.h"
 #include "Localisation.h"
 #include "Palette.h"
+#include "RockStyle.h"
 
 namespace
 {
@@ -144,14 +145,9 @@ void LoopView::timerCallback()
 
 void LoopView::paint (juce::Graphics& g)
 {
-    g.fillAll (palette::trench);
+    rockstyle::paintBackground (g, getLocalBounds().toFloat());
     const auto panel = getLocalBounds().reduced (16, 0).withTrimmedBottom (14).toFloat();
-    g.setColour (palette::panel.withAlpha (0.92f));
-    g.fillRoundedRectangle (panel, 8.0f);
-    g.setColour (palette::panelEdge);
-    g.drawRoundedRectangle (panel, 8.0f, 1.0f);
-    g.setColour (palette::kelp);
-    g.fillRoundedRectangle (panel.withHeight (3.0f).reduced (12.0f, 0.0f), 1.5f);
+    rockstyle::paintPanel (g, panel, palette::kelp);
 
     // Progress ring: position within the loop (or fill-up towards the 60 s limit while recording).
     const auto s = looper.getState();

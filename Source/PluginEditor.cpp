@@ -3,6 +3,8 @@
 
 using poman::i18n::tr;
 #include "Palette.h"
+#include "RockStyle.h"
+#include "BinaryData.h"
 
 #include <numeric>
 
@@ -29,6 +31,8 @@ PomanLookAndFeel::PomanLookAndFeel()
 void PomanLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
                                            float startAngle, float endAngle, juce::Slider& slider)
 {
+    // A brass amp knob: knurled dark skirt, domed brass cap with a cream pointer, and an amber arc
+    // around it that glows like a lit scale.
     const auto accent = slider.findColour (juce::Slider::rotarySliderFillColourId);
     const auto bounds = juce::Rectangle<int> (x, y, width, height).toFloat().reduced (4.0f);
     const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) * 0.5f;
@@ -36,6 +40,7 @@ void PomanLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
     const float angle = startAngle + sliderPos * (endAngle - startAngle);
     const float trackWidth = juce::jmax (2.5f, radius * 0.1f);
     const float arcRadius = radius - trackWidth * 0.5f;
+    const float alpha = slider.isEnabled() ? 1.0f : 0.4f;
 
     juce::Path track;
     track.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f, startAngle, endAngle, true);
@@ -44,93 +49,169 @@ void PomanLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
 
     juce::Path value;
     value.addCentredArc (centre.x, centre.y, arcRadius, arcRadius, 0.0f, startAngle, angle, true);
-    g.setColour (accent.withAlpha (0.25f));
-    g.strokePath (value, juce::PathStrokeType (trackWidth * 2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    g.setColour (accent);
+    g.setColour (accent.withAlpha (0.22f * alpha));
+    g.strokePath (value, juce::PathStrokeType (trackWidth * 2.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.setColour (accent.withMultipliedAlpha (alpha));
     g.strokePath (value, juce::PathStrokeType (trackWidth, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    const float capRadius = radius * 0.68f;
-    juce::ColourGradient cap (palette::panelEdge.brighter (0.25f), centre.x, centre.y - capRadius,
-                              palette::abyss, centre.x, centre.y + capRadius, false);
-    g.setGradientFill (cap);
-    g.fillEllipse (juce::Rectangle<float> (capRadius * 2.0f, capRadius * 2.0f).withCentre (centre));
-    g.setColour (palette::panelEdge);
-    g.drawEllipse (juce::Rectangle<float> (capRadius * 2.0f, capRadius * 2.0f).withCentre (centre), 1.0f);
+    // Skirt with knurling.
+    const float skirt = radius * 0.74f;
+    const auto skirtArea = juce::Rectangle<float> (skirt * 2.0f, skirt * 2.0f).withCentre (centre);
+    g.setColour (juce::Colours::black.withAlpha (0.5f));
+    g.fillEllipse (skirtArea.translated (0.0f, 1.5f));
+    juce::ColourGradient skirtFill (juce::Colour (0xff3a2c20), centre.x, centre.y - skirt, juce::Colour (0xff0d0907), centre.x, centre.y + skirt, false);
+    g.setGradientFill (skirtFill);
+    g.fillEllipse (skirtArea);
+    g.setColour (juce::Colours::black.withAlpha (0.45f));
+    for (int i = 0; i < 28; ++i)
+    {
+        const float a = angle + juce::MathConstants<float>::twoPi * (float) i / 28.0f;
+        const auto inner = centre.getPointOnCircumference (skirt * 0.82f, a), outer = centre.getPointOnCircumference (skirt * 0.98f, a);
+        g.drawLine ({ inner, outer }, 1.0f);
+    }
 
+    // Brass cap with a highlight from the upper left.
+    const float cap = radius * 0.52f;
+    const auto capArea = juce::Rectangle<float> (cap * 2.0f, cap * 2.0f).withCentre (centre);
+    juce::ColourGradient brass (palette::brassLight.withMultipliedAlpha (alpha), capArea.getX(), capArea.getY(),
+                                palette::brassDark.withMultipliedAlpha (alpha), capArea.getRight(), capArea.getBottom(), false);
+    brass.addColour (0.45, juce::Colour (0xffc39a58).withMultipliedAlpha (alpha));
+    g.setGradientFill (brass);
+    g.fillEllipse (capArea);
+    g.setColour (juce::Colours::black.withAlpha (0.55f));
+    g.drawEllipse (capArea, 1.0f);
+    g.setColour (juce::Colours::white.withAlpha (0.25f));
+    g.fillEllipse (capArea.reduced (cap * 0.55f).translated (-cap * 0.25f, -cap * 0.3f));
+
+    // Pointer: a cream line from the cap across the skirt.
     juce::Path pointer;
-    pointer.addRoundedRectangle (-1.5f, -capRadius * 0.92f, 3.0f, capRadius * 0.5f, 1.5f);
-    g.setColour (palette::text);
+    pointer.addRoundedRectangle (-1.6f, -skirt * 0.98f, 3.2f, skirt * 0.62f, 1.6f);
+    g.setColour (juce::Colours::black.withAlpha (0.6f));
+    g.fillPath (pointer, juce::AffineTransform::rotation (angle).translated (centre.translated (0.0f, 1.0f)));
+    g.setColour (palette::text.withMultipliedAlpha (alpha));
     g.fillPath (pointer, juce::AffineTransform::rotation (angle).translated (centre));
 }
 
 juce::Font PomanLookAndFeel::getTextButtonFont (juce::TextButton& button, int buttonHeight)
 {
     if (const auto* size = button.getProperties().getVarPointer ("fontSize"))
-        return juce::FontOptions ((float) *size, juce::Font::bold);
-    return LookAndFeel_V4::getTextButtonFont (button, buttonHeight);
+        return juce::Font (juce::FontOptions ((float) *size, juce::Font::bold)).withExtraKerningFactor (0.05f);
+    return juce::FontOptions (juce::jmin (13.5f, (float) buttonHeight * 0.5f), juce::Font::bold);
 }
 
 void PomanLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width, int height, float sliderPos,
                                          float minPos, float maxPos, juce::Slider::SliderStyle style, juce::Slider& slider)
 {
+    if (style == juce::Slider::LinearHorizontal)
+    {
+        // A recessed slot with an amber fill and a brass knob.
+        const auto accent = slider.findColour (juce::Slider::trackColourId);
+        const float cy = (float) y + (float) height * 0.5f;
+        const auto slot = juce::Rectangle<float> ((float) x, cy - 3.0f, (float) width, 6.0f);
+        g.setColour (palette::abyss);
+        g.fillRoundedRectangle (slot, 3.0f);
+        g.setColour (juce::Colours::black.withAlpha (0.6f));
+        g.drawRoundedRectangle (slot, 3.0f, 1.0f);
+        g.setColour (accent);
+        g.fillRoundedRectangle (slot.withRight (sliderPos).reduced (0.0f, 1.0f), 2.5f);
+        const auto knob = juce::Rectangle<float> (14.0f, 14.0f).withCentre ({ sliderPos, cy });
+        juce::ColourGradient brass (palette::brassLight, knob.getX(), knob.getY(), palette::brassDark, knob.getRight(), knob.getBottom(), false);
+        g.setGradientFill (brass);
+        g.fillEllipse (knob);
+        g.setColour (juce::Colours::black.withAlpha (0.6f));
+        g.drawEllipse (knob, 1.0f);
+        return;
+    }
     if (style != juce::Slider::LinearVertical)
     {
         LookAndFeel_V4::drawLinearSlider (g, x, y, width, height, sliderPos, minPos, maxPos, style, slider);
         return;
     }
 
-    // EQ fader: thin track, fill from the 0 dB centre to the thumb.
+    // EQ fader: recessed slot, fill from the 0 dB centre to a brass fader cap.
     const auto accent = slider.findColour (juce::Slider::trackColourId);
     const float cx = (float) x + (float) width * 0.5f;
     g.setColour (palette::abyss);
-    g.fillRoundedRectangle (cx - 2.5f, (float) y, 5.0f, (float) height, 2.5f);
+    g.fillRoundedRectangle (cx - 3.0f, (float) y, 6.0f, (float) height, 3.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.6f));
+    g.drawRoundedRectangle (cx - 3.0f, (float) y, 6.0f, (float) height, 3.0f, 1.0f);
 
     const float zeroY = (float) slider.getPositionOfValue (0.0);
     g.setColour (accent);
-    g.fillRoundedRectangle (cx - 2.5f, juce::jmin (zeroY, sliderPos), 5.0f, std::abs (zeroY - sliderPos), 2.5f);
+    g.fillRoundedRectangle (cx - 2.0f, juce::jmin (zeroY, sliderPos), 4.0f, std::abs (zeroY - sliderPos), 2.0f);
 
     g.setColour (palette::panelEdge.brighter (0.5f));
-    g.fillRect (cx - 7.0f, zeroY, 14.0f, 1.0f);
+    g.fillRect (cx - 8.0f, zeroY, 16.0f, 1.0f);
 
-    const float thumbWidth = juce::jmin (22.0f, (float) width * 0.8f);
-    const auto thumb = juce::Rectangle<float> (thumbWidth, 9.0f).withCentre ({ cx, sliderPos });
-    g.setColour (palette::text);
-    g.fillRoundedRectangle (thumb, 3.0f);
-    g.setColour (palette::abyss);
-    g.fillRect (thumb.withSizeKeepingCentre (thumbWidth - 6.0f, 1.0f));
+    const float thumbWidth = juce::jmin (24.0f, (float) width * 0.85f);
+    const auto thumb = juce::Rectangle<float> (thumbWidth, 11.0f).withCentre ({ cx, sliderPos });
+    juce::ColourGradient brass (palette::brassLight, thumb.getX(), thumb.getY(), palette::brassDark, thumb.getX(), thumb.getBottom(), false);
+    g.setGradientFill (brass);
+    g.fillRoundedRectangle (thumb, 2.5f);
+    g.setColour (juce::Colours::black.withAlpha (0.7f));
+    g.drawRoundedRectangle (thumb, 2.5f, 1.0f);
+    g.fillRect (thumb.withSizeKeepingCentre (thumbWidth - 6.0f, 1.2f));
 }
 
 void PomanLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button, bool highlighted, bool)
 {
+    // A jewel pilot lamp in a chrome bezel: dark when off, glowing when on.
     const auto accent = button.findColour (juce::ToggleButton::tickColourId);
-    const auto area = button.getLocalBounds().toFloat().reduced (2.0f);
+    const auto area = button.getLocalBounds().toFloat().reduced (1.5f);
     const float size = juce::jmin (area.getWidth(), area.getHeight());
-    const auto led = juce::Rectangle<float> (size, size).withCentre (area.getCentre());
+    const auto bezel = juce::Rectangle<float> (size, size).withCentre (area.getCentre());
+    const auto lens = bezel.reduced (size * 0.18f);
     const bool on = button.getToggleState();
 
     if (on)
     {
-        g.setColour (accent.withAlpha (0.3f));
-        g.fillEllipse (led.expanded (3.0f));
+        juce::ColourGradient halo (accent.withAlpha (0.55f), bezel.getCentreX(), bezel.getCentreY(),
+                                   accent.withAlpha (0.0f), bezel.getCentreX(), bezel.getY() - size * 0.6f, true);
+        g.setGradientFill (halo);
+        g.fillEllipse (bezel.expanded (size * 0.55f));
     }
 
-    g.setColour (on ? accent : palette::abyss);
-    g.fillEllipse (led);
-    g.setColour (highlighted ? palette::text : palette::panelEdge.brighter (0.3f));
-    g.drawEllipse (led, 1.2f);
+    juce::ColourGradient chrome (palette::steel, bezel.getX(), bezel.getY(), juce::Colour (0xff3b3630), bezel.getRight(), bezel.getBottom(), false);
+    g.setGradientFill (chrome);
+    g.fillEllipse (bezel);
+
+    juce::ColourGradient glass (on ? accent.brighter (0.6f) : juce::Colour (0xff2a1e15), lens.getCentreX() - lens.getWidth() * 0.2f, lens.getY(),
+                                on ? accent.darker (0.3f) : juce::Colour (0xff0a0705), lens.getCentreX(), lens.getBottom(), false);
+    g.setGradientFill (glass);
+    g.fillEllipse (lens);
+    g.setColour (juce::Colours::white.withAlpha (on ? 0.6f : 0.18f));
+    g.fillEllipse (lens.reduced (lens.getWidth() * 0.32f).translated (-lens.getWidth() * 0.14f, -lens.getHeight() * 0.16f));
+    g.setColour (highlighted ? palette::text.withAlpha (0.7f) : juce::Colours::black.withAlpha (0.7f));
+    g.drawEllipse (bezel, 1.0f);
 }
 
 void PomanLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button, const juce::Colour&,
                                                bool highlighted, bool down)
 {
+    // A brushed metal plate; when on it glows in the button's colour like a lit footswitch.
     const auto area = button.getLocalBounds().toFloat().reduced (1.0f);
     const auto accent = button.findColour (juce::TextButton::buttonOnColourId);
     const bool on = button.getToggleState();
+    const float corner = 4.0f;
 
-    g.setColour (on ? accent : (highlighted || down ? palette::panelEdge : palette::trench));
-    g.fillRoundedRectangle (area, 4.0f);
-    g.setColour (on ? accent.brighter (0.3f) : palette::panelEdge);
-    g.drawRoundedRectangle (area, 4.0f, 1.0f);
+    if (on)
+    {
+        g.setColour (accent.withAlpha (0.28f));
+        g.fillRoundedRectangle (area.expanded (2.0f), corner + 2.0f);
+        juce::ColourGradient lit (accent.brighter (0.35f), area.getX(), area.getY(), accent.darker (0.25f), area.getX(), area.getBottom(), false);
+        g.setGradientFill (lit);
+    }
+    else
+    {
+        const auto top = highlighted || down ? juce::Colour (0xff3a2b1e) : juce::Colour (0xff2a1f16);
+        juce::ColourGradient plate (top, area.getX(), area.getY(), juce::Colour (0xff120d09), area.getX(), area.getBottom(), false);
+        g.setGradientFill (plate);
+    }
+    g.fillRoundedRectangle (area, corner);
+    g.setColour (juce::Colours::white.withAlpha (on ? 0.3f : 0.07f));
+    g.drawHorizontalLine ((int) area.getY() + 1, area.getX() + corner, area.getRight() - corner);
+    g.setColour (on ? accent.darker (0.4f) : palette::panelEdge.withAlpha (button.isEnabled() ? 1.0f : 0.4f));
+    g.drawRoundedRectangle (area, corner, 1.0f);
 }
 
 namespace
@@ -148,6 +229,8 @@ PomanEditor::PomanEditor (PomanProcessor& p)
     : AudioProcessorEditor (&p), processor (p)
 {
     setLookAndFeel (&lookAndFeel);
+    // Owned by the editor (not the global image cache), so it is freed with the window.
+    logoBanner = juce::ImageFileFormat::loadFrom (BinaryData::logo_banner_png, BinaryData::logo_banner_pngSize);
 
     inputKnob = &addKnob ("input", "INPUT");
     outputKnob = &addKnob ("output", "OUTPUT");
@@ -1083,47 +1166,26 @@ void PomanEditor::layoutKnobs (Section& section, juce::Rectangle<int> area)
 //==============================================================================
 void PomanEditor::paint (juce::Graphics& g)
 {
-    const auto bounds = getLocalBounds().toFloat();
-    juce::ColourGradient depth (palette::trench, bounds.getCentreX(), 0.0f, palette::abyss, bounds.getCentreX(), bounds.getBottom(), false);
-    g.setGradientFill (depth);
-    g.fillAll();
-
-    // Faint "bioluminescent" particles; seeded so they stay put between repaints.
-    juce::Random rng (0xab155a1);
-    for (int i = 0; i < 70; ++i)
-    {
-        const float px = rng.nextFloat() * bounds.getWidth();
-        const float py = rng.nextFloat() * bounds.getHeight();
-        const float r = 0.6f + rng.nextFloat() * 1.6f;
-        g.setColour (palette::biolume.withAlpha (0.04f + rng.nextFloat() * 0.12f));
-        g.fillEllipse (px, py, r, r);
-    }
+    rockstyle::paintBackground (g, getLocalBounds().toFloat());
 
     const float scale = (float) getWidth() / 1040.0f;
-    auto header = getLocalBounds().removeFromTop ((int) (64 * scale)).reduced ((int) (20 * scale), 0);
-    g.setColour (palette::text);
-    g.setFont (juce::FontOptions (30.0f * scale, juce::Font::bold));
-    g.drawText ("POMAN", header, juce::Justification::centredLeft);
-    g.setColour (palette::biolume);
-    g.setFont (juce::FontOptions (11.0f * scale));
-    if (studioView == nullptr) // the standalone needs the room for its page buttons
-        g.drawText (tr ("GUITAR AMP SUITE"), header.withTrimmedLeft ((int) (128 * scale)), juce::Justification::centredLeft);
+    // The POMAN plate from the logo, fitted to the header's height.
+    if (logoArea.getWidth() > 0 && logoBanner.isValid())
+        g.drawImage (logoBanner, logoArea.toFloat(), juce::RectanglePlacement::centred);
+    if (studioView == nullptr) // the plugin has room for the subtitle
+    {
+        g.setColour (palette::biolume);
+        g.setFont (juce::Font (juce::FontOptions (11.0f * scale, juce::Font::bold)).withExtraKerningFactor (0.15f));
+        g.drawText (tr ("GUITAR AMP SUITE"), logoArea.withX (logoArea.getRight() + (int) (44 * scale)).withWidth ((int) (170 * scale)),
+                    juce::Justification::centredLeft);
+    }
 
     for (auto& s : sections)
     {
-        const auto area = s->bounds.toFloat();
-        g.setColour (palette::panel.withAlpha (0.92f));
-        g.fillRoundedRectangle (area, 8.0f);
-        g.setColour (palette::panelEdge);
-        g.drawRoundedRectangle (area, 8.0f, 1.0f);
-
-        g.setColour (s->accent);
-        g.fillRoundedRectangle (area.withHeight (3.0f).reduced (12.0f, 0.0f), 1.5f);
-
-        g.setColour (palette::text);
-        g.setFont (juce::FontOptions (13.0f * scale, juce::Font::bold));
-        g.drawText (tr (s->title), s->bounds.reduced ((int) (14 * scale), 0).withHeight ((int) (34 * scale)).withTrimmedLeft (s->power ? (int) (24 * scale) : 0),
-                    juce::Justification::centredLeft);
+        rockstyle::paintPanel (g, s->bounds.toFloat(), s->accent, scale);
+        rockstyle::paintTitle (g, tr (s->title),
+                               s->bounds.reduced ((int) (14 * scale), 0).withHeight ((int) (34 * scale)).withTrimmedLeft (s->power ? (int) (24 * scale) : 0),
+                               13.0f * scale);
     }
 }
 
@@ -1148,7 +1210,8 @@ void PomanEditor::resized()
         k->slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
     }
 
-    header.removeFromLeft (sc (104)); // the logo
+    logoArea = header.removeFromLeft (sc (190)).withSizeKeepingCentre (sc (190), sc (56)); // the POMAN plate
+    header.removeFromLeft (sc (8));
     languageButton.setBounds (header.removeFromLeft (sc (32)).withSizeKeepingCentre (sc (30), sc (22)));
     header.removeFromLeft (sc (studioView != nullptr ? 24 : 134));
     if (studioView != nullptr)

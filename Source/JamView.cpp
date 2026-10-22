@@ -1,6 +1,7 @@
 #include "JamView.h"
 #include "Localisation.h"
 #include "Palette.h"
+#include "RockStyle.h"
 
 using poman::i18n::tr;
 
@@ -145,14 +146,9 @@ void JamView::timerCallback()
 
 void JamView::paint (juce::Graphics& g)
 {
-    g.fillAll (palette::trench);
+    rockstyle::paintBackground (g, getLocalBounds().toFloat());
     const auto panel = getLocalBounds().reduced (16, 0).withTrimmedBottom (14).toFloat();
-    g.setColour (palette::panel.withAlpha (0.92f));
-    g.fillRoundedRectangle (panel, 8.0f);
-    g.setColour (palette::panelEdge);
-    g.drawRoundedRectangle (panel, 8.0f, 1.0f);
-    g.setColour (palette::coral);
-    g.fillRoundedRectangle (panel.withHeight (3.0f).reduced (12.0f, 0.0f), 1.5f);
+    rockstyle::paintPanel (g, panel, palette::coral);
 }
 
 void JamView::Waveform::paint (juce::Graphics& g)

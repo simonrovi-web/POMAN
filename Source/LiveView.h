@@ -51,6 +51,7 @@ private:
     bool tunerOn = false;
 
     juce::Rectangle<int> nameArea;
+    juce::Image badge; // the POMAN emblem drawn faintly behind the preset name (loaded on first paint)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LiveView)
 };

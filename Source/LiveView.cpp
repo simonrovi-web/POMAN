@@ -1,7 +1,9 @@
 #include "LiveView.h"
 #include "Localisation.h"
 #include "Palette.h"
+#include "RockStyle.h"
 #include "PluginProcessor.h"
+#include "BinaryData.h"
 
 namespace
 {
@@ -162,14 +164,20 @@ void LiveView::timerCallback()
 
 void LiveView::paint (juce::Graphics& g)
 {
-    g.fillAll (palette::trench);
+    rockstyle::paintBackground (g, getLocalBounds().toFloat());
     const auto panel = getLocalBounds().reduced (16, 0).withTrimmedBottom (14).toFloat();
-    g.setColour (palette::panel.withAlpha (0.92f));
-    g.fillRoundedRectangle (panel, 8.0f);
-    g.setColour (palette::panelEdge);
-    g.drawRoundedRectangle (panel, 8.0f, 1.0f);
-    g.setColour (palette::biolume);
-    g.fillRoundedRectangle (panel.withHeight (3.0f).reduced (12.0f, 0.0f), 1.5f);
+    rockstyle::paintPanel (g, panel, palette::biolume);
+
+    // The POMAN badge, faint, behind the preset name.
+    if (! badge.isValid())
+        badge = juce::ImageFileFormat::loadFrom (BinaryData::logo_badge_png, BinaryData::logo_badge_pngSize);
+    if (badge.isValid() && ! nameArea.isEmpty())
+    {
+        g.setOpacity (0.13f);
+        g.drawImage (badge, nameArea.toFloat().withSizeKeepingCentre ((float) nameArea.getHeight(), (float) nameArea.getHeight()),
+                     juce::RectanglePlacement::centred);
+        g.setOpacity (1.0f);
+    }
 
     auto area = nameArea.toFloat();
     if (tunerOn)

@@ -3,6 +3,7 @@
 
 using poman::i18n::tr;
 #include "Palette.h"
+#include "RockStyle.h"
 
 namespace
 {
@@ -371,13 +372,9 @@ void StudioView::timerCallback()
 
 void StudioView::paint (juce::Graphics& g)
 {
-    g.fillAll (palette::trench);
-
+    rockstyle::paintBackground (g, getLocalBounds().toFloat());
     const auto panelArea = getLocalBounds().reduced (16, 0).withTrimmedBottom (14).toFloat();
-    g.setColour (palette::panel.withAlpha (0.92f));
-    g.fillRoundedRectangle (panelArea, 8.0f);
-    g.setColour (palette::panelEdge);
-    g.drawRoundedRectangle (panelArea, 8.0f, 1.0f);
+    rockstyle::paintPanel (g, panelArea, palette::biolume);
 
     // Ruler: seconds along the top of the lanes.
     if (! rulerArea.isEmpty())

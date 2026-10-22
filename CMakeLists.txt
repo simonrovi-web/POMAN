@@ -1,6 +1,6 @@
 ﻿cmake_minimum_required(VERSION 3.22)
 
-project(POMAN VERSION 0.15.1 LANGUAGES C CXX)
+project(POMAN VERSION 0.16.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,7 +16,7 @@ juce_add_plugin(POMAN
     COMPANY_COPYRIGHT "Copyright (c) 2026 POMAN Audio"
     DESCRIPTION "POMAN guitar amp suite"
     PRODUCT_NAME "POMAN"
-    ICON_BIG Resources/icon.png
+    ICON_BIG Resources/Branding/logo_badge.png
     BUNDLE_ID "com.pomanaudio.poman"
     PLUGIN_MANUFACTURER_CODE Pman
     PLUGIN_CODE Pmn1
@@ -44,6 +44,11 @@ target_sources(POMAN PRIVATE
 
 target_include_directories(POMAN PRIVATE Source)
 
+# Branding images (logo banner for the header, badge for the LIVE page and the app icon).
+juce_add_binary_data(POMANAssets SOURCES
+    Resources/Branding/logo_banner.png
+    Resources/Branding/logo_badge.png)
+
 target_compile_definitions(POMAN PUBLIC
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
@@ -57,6 +62,7 @@ target_compile_definitions(POMAN PUBLIC
 target_link_libraries(POMAN
     PRIVATE
         nam_core
+        POMANAssets
         juce::juce_audio_utils
         juce::juce_dsp
     PUBLIC

@@ -1,5 +1,11 @@
 ﻿# POMAN — Guitar Amp Suite
 
+*Free guitar amp suite (VST3 + standalone) for Windows: modelled tube amps, pedals, cabinets, studio, drums, looper
+and a practice player. Interface in Spanish and English.*
+
+**Descargas:** en [Releases](../../releases) están `POMAN-Portable-win64.zip` (sin instalación) y `POMAN-win64.zip`
+(la app y el plugin VST3). Dentro, `LEEME.txt` explica cómo empezar.
+
 Plugin de amplificador de guitarra original (VST3 + Standalone) hecho con JUCE 8.
 Su concepto es el de un "rig completo" en un solo plugin, con DSP, nombre e interfaz propios.
 
@@ -111,6 +117,13 @@ Reproductor de acompañamiento: WSOLA (tramas Hann de 2048 con búsqueda por cor
 y remuestreo Lagrange para el tono, bucle A-B, MP3/FLAC/WAV/AIFF/OGG en memoria a 16 bits (hasta 15 min). Se mezcla
 después del grabador, así que no entra en las tomas. ~0,8 % de un núcleo con velocidad y tono cambiados.
 
+## Aspecto
+
+Estilo de amplificador rockero tomado del logo: tolex negro, paneles de cuero con bisel de bronce y tornillos, mandos de
+latón con arco ámbar, pilotos tipo joya y placas metálicas que se iluminan. Los colores están en `Source/Palette.h` y el
+dibujo compartido de fondo, paneles y títulos en `Source/RockStyle.h`; el logo (`Resources/Branding/`) va embebido con
+`juce_add_binary_data` y la insignia es también el icono de la aplicación.
+
 ## Directo e idioma (standalone)
 
 Página **LIVE/DIRECTO**: preset en grande con < > grandes, pulsadores DRIVE/WAH/MOD/DELAY/REVERB/TAP/AFINADOR (MIDI learn
@@ -171,3 +184,9 @@ Licencias de terceros: ver [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 - `Source/PluginProcessor.*`: parámetros, estado (incluye la ruta del IR) y cadena
 - `Source/PluginEditor.*`: LookAndFeel, interfaz redimensionable, medidores y afinador
 - `Source/PresetManager.*`, `Source/Tuner.h`, `Source/StandaloneApp.cpp` (app portable)
+
+## Licencia
+
+POMAN es software libre bajo la **GNU Affero General Public License v3.0** (`LICENSE`): puedes usarlo, estudiarlo,
+modificarlo y redistribuirlo, y quien distribuya una versión modificada debe publicar su código con la misma licencia.
+Las licencias de las bibliotecas de terceros están en `THIRD_PARTY_NOTICES.md`.

@@ -1,5 +1,6 @@
 #include "DrumView.h"
 #include "Palette.h"
+#include "RockStyle.h"
 #include "Localisation.h"
 
 namespace
@@ -298,14 +299,9 @@ void DrumView::timerCallback()
 
 void DrumView::paint (juce::Graphics& g)
 {
-    g.fillAll (palette::trench);
+    rockstyle::paintBackground (g, getLocalBounds().toFloat());
     const auto panelArea = getLocalBounds().reduced (16, 0).withTrimmedBottom (14).toFloat();
-    g.setColour (palette::panel.withAlpha (0.92f));
-    g.fillRoundedRectangle (panelArea, 8.0f);
-    g.setColour (palette::panelEdge);
-    g.drawRoundedRectangle (panelArea, 8.0f, 1.0f);
-    g.setColour (palette::ember);
-    g.fillRoundedRectangle (panelArea.withHeight (3.0f).reduced (12.0f, 0.0f), 1.5f);
+    rockstyle::paintPanel (g, panelArea, palette::ember);
 
     g.setFont (juce::FontOptions (11.0f, juce::Font::bold));
     const float cellW = (float) stepNumberArea.getWidth() / DrumMachine::numSteps;
