@@ -131,6 +131,22 @@ public:
         if (firstRun)
             preferLowLatencyDevice (holder->deviceManager);
 
+        // Versions before 0.15.1 opened only two inputs. Once, open every input of the interface (up to
+        // 8) so the INPUT selector can offer them; after that the choice in Audio settings is kept.
+        if (! settings->getBoolValue ("allInputsOpened", false))
+        {
+            auto& dm = holder->deviceManager;
+            if (auto* device = dm.getCurrentAudioDevice())
+            {
+                auto setup = dm.getAudioDeviceSetup();
+                setup.useDefaultInputChannels = false;
+                setup.inputChannels.clear();
+                setup.inputChannels.setRange (0, juce::jmin (8, device->getInputChannelNames().size()), true);
+                dm.setAudioDeviceSetup (setup, true);
+            }
+            settings->setValue ("allInputsOpened", true);
+        }
+
         mainWindow = std::make_unique<juce::StandaloneFilterWindow> (
             getApplicationName(),
             juce::LookAndFeel::getDefaultLookAndFeel().findColour (juce::ResizableWindow::backgroundColourId),

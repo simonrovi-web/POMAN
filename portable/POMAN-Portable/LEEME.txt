@@ -1,8 +1,17 @@
-POMAN - Guitar Amp Suite (version portable 0.15.0)
+POMAN - Guitar Amp Suite (version portable 0.15.1)
 ==================================================
 
 No necesita instalacion. Copia esta carpeta donde quieras (USB, otro PC,
 escritorio) y ejecuta POMAN.exe.
+
+Novedades 0.15.1
+- Interfaces con varias entradas: antes POMAN sumaba todas las entradas
+  como si fueran la guitarra (por ejemplo, guitarra y micro sonaban juntos
+  por el amplificador). Ahora el selector IN (junto a CAL) elige la entrada
+  de la guitarra: IN 1, IN 2... o IN 1+2. Por defecto IN 1. Si tu guitarra
+  esta en otra entrada, eligela ahi; se guarda con la sesion.
+  La app abre todas las entradas de la interfaz (hasta 8) la primera vez;
+  puedes cambiar cuales en los ajustes de audio.
 
 Novedades 0.15.0
 - Pedales nuevos en DRIVE: Transparent OD (empuja el amplificador sin

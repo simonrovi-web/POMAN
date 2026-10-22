@@ -122,6 +122,8 @@ guardar estado por componente.
 
 - **Delay** sincronizable (figuras de 1/2 a 1/16, con puntillo y tresillo) al tempo del DAW o del estudio, con tap tempo.
 - **CAL**: calibración de entrada que lleva el pico de la DI a -9 dBFS.
+- **IN**: entrada de la guitarra (IN 1, IN 2… o IN 1+2); las demás entradas de la interfaz se ignoran. La app acepta
+  hasta 8 entradas (`InputSelect.h`); en un DAW el plugin es estéreo.
 - **Presets**: 43 de fábrica más presets de usuario (`.poman`, XML). En el standalone se guardan en `Presets/` junto al exe; en el VST3, en `Documentos/POMAN/Presets`.
 - **Afinador** YIN (31 Hz a 1,3 kHz) que silencia la salida mientras está abierto.
 - **Medidores** de entrada y salida con indicador de saturación.

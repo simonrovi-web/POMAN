@@ -28,6 +28,8 @@ inline const std::vector<std::pair<const char*, const char*>>& table()
         { "Cancel", "Cancelar" }, { "Could not save to ", "No se pudo guardar en " },
         { "Language / Idioma", "Idioma / Language" },
         { "Input calibration: press, then play hard for 5 seconds", "Calibrar entrada: pulsa y toca fuerte durante 5 segundos" },
+        { "Guitar input: the interface input the guitar is plugged into (the other inputs are ignored)",
+          "Entrada de guitarra: la entrada de la interfaz donde est\xc3\xa1 conectada la guitarra (las dem\xc3\xa1s se ignoran)" },
         { "NO SIG", "SIN SE\xc3\x91" "AL" },
 
         // Sections and knobs

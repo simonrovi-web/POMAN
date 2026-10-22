@@ -7,6 +7,7 @@ const juce::Identifier irPathProperty { "impulseResponsePath" };
 const juce::Identifier irPathBProperty { "impulseResponsePathB" };
 const juce::Identifier namPathProperty { "namModelPath" };
 const juce::Identifier looperSyncProperty { "looperSync" }; // session only, like the drums
+const juce::Identifier inputSourceProperty { "inputSource" }; // the guitar's interface input (session only)
 
 const juce::Identifier& slotProperty (PomanProcessor::FileSlot slot)
 {
@@ -176,7 +177,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout PomanProcessor::createParame
 
 PomanProcessor::PomanProcessor()
     : AudioProcessor (BusesProperties()
-                          .withInput ("Input", juce::AudioChannelSet::stereo(), true)
+                          // The standalone takes up to 8 interface inputs (the INPUT selector picks the
+                          // guitar); a DAW track is stereo.
+                          .withInput ("Input", juce::JUCEApplicationBase::isStandaloneApp() ? juce::AudioChannelSet::discreteChannels (8)
+                                                                                            : juce::AudioChannelSet::stereo(), true)
                           .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PomanState", createParameterLayout())
 {
@@ -203,9 +207,11 @@ PomanProcessor::PomanProcessor()
 
 bool PomanProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
 {
-    const auto in = layouts.getMainInputChannelSet();
+    // Any number of inputs: the standalone then receives every active input of the interface, and the
+    // INPUT selector picks the guitar among them (a DAW track gives mono or stereo).
+    const int ins = layouts.getMainInputChannelSet().size();
     return layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo()
-        && (in == juce::AudioChannelSet::mono() || in == juce::AudioChannelSet::stereo());
+        && ins >= 1 && ins <= poman::InputSelect::maxInputs;
 }
 
 void PomanProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
@@ -396,17 +402,14 @@ void PomanProcessor::processChunk (juce::AudioBuffer<float>& buffer, int startSa
 {
     // Guitar is mono: sum the inputs, run the rig, then widen with the stereo effects.
     auto* mono = monoBuffer.getWritePointer (0);
-    const int numInputs = juce::jmax (1, getTotalNumInputChannels());
+    // The guitar is one interface input (the INPUT selector); the others are ignored.
+    poman::InputSelect::read (buffer.getArrayOfReadPointers(), getTotalNumInputChannels(), inputSource.load(), startSample, mono, numSamples);
 
     float rawPeak = 0.0f;
     for (int i = 0; i < numSamples; ++i)
     {
-        float sum = 0.0f;
-        for (int ch = 0; ch < getTotalNumInputChannels(); ++ch)
-            sum += buffer.getReadPointer (ch)[startSample + i];
-        const float raw = sum / (float) numInputs;
-        rawPeak = juce::jmax (rawPeak, std::abs (raw));
-        mono[i] = raw * inputGain.getNextValue();
+        rawPeak = juce::jmax (rawPeak, std::abs (mono[i]));
+        mono[i] *= inputGain.getNextValue();
     }
     // Re-amping replaces the guitar with a recorded DI; otherwise the clean guitar is kept as the DI.
     if (! recorder->readDi (mono, numSamples))
@@ -664,6 +667,7 @@ void PomanProcessor::getStateInformation (juce::MemoryBlock& destData)
     state.appendChild (drums.toValueTree(), nullptr);
     state.appendChild (midiRouter.toValueTree(), nullptr); // MIDI map is global, not part of presets
     state.setProperty (looperSyncProperty, looper.isSynced(), nullptr);
+    state.setProperty (inputSourceProperty, inputSource.load(), nullptr);
     if (backing.isLoaded())
     {
         juce::ValueTree b ("Backing");
@@ -709,6 +713,11 @@ void PomanProcessor::setStateInformation (const void* data, int sizeInBytes)
     {
         drums.fromValueTree (drumState);
         state.removeChild (drumState, nullptr);
+    }
+    if (state.hasProperty (inputSourceProperty))
+    {
+        setInputSource ((int) state.getProperty (inputSourceProperty));
+        state.removeProperty (inputSourceProperty, nullptr);
     }
     if (state.hasProperty (looperSyncProperty))
     {

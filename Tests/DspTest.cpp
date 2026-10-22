@@ -1,5 +1,6 @@
 ﻿// Offline render of every amp model and drive type: checks for NaN/silence/runaway levels
 // and prints RMS so the models can be level-matched.
+#include "InputSelect.h"
 #include "dsp/BackingTrack.h"
 #include "dsp/PitchShift.h"
 #include "dsp/Tubes.h"
@@ -1673,6 +1674,25 @@ int main()
             std::printf ("%s  %-24s position stayed in %.2f..%.2f s over 6 s\n", loopOk ? "PASS" : "FAIL", "A-B loop", lo, hi);
         }
         file.deleteFile();
+    }
+
+    std::printf ("-- Guitar input selection --\n");
+    {
+        // Four interface inputs, each a different constant, so the output shows exactly what was taken.
+        constexpr int n = 8;
+        std::array<std::array<float, n>, 4> data {};
+        for (int ch = 0; ch < 4; ++ch)
+            data[(size_t) ch].fill ((float) (ch + 1) * 0.1f);
+        const float* inputs[] { data[0].data(), data[1].data(), data[2].data(), data[3].data() };
+        std::array<float, n> out {};
+        const auto take = [&] (int numInputs, int choice) { poman::InputSelect::read (inputs, numInputs, choice, 2, out.data(), n - 2); return out[0]; };
+        const bool ok = std::abs (take (4, 2) - 0.3f) < 1.0e-6f                                     // IN 3 only (no mic bleed from the others)
+                     && std::abs (take (4, 0) - 0.1f) < 1.0e-6f                                     // IN 1
+                     && std::abs (take (4, poman::InputSelect::sumOfFirstTwo) - 0.15f) < 1.0e-6f    // IN 1+2 averaged
+                     && std::abs (take (2, 3) - 0.1f) < 1.0e-6f                                     // IN 4 on a 2-input device -> IN 1
+                     && std::abs (take (1, poman::InputSelect::sumOfFirstTwo) - 0.1f) < 1.0e-6f;    // 1+2 on a mono device -> IN 1
+        failures += ok ? 0 : 1;
+        std::printf ("%s  %-24s single input taken alone, 1+2 averaged, missing input falls back to IN 1\n", ok ? "PASS" : "FAIL", "input selector");
     }
     return failures;
 }

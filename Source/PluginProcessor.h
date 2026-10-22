@@ -21,6 +21,7 @@
 #include "dsp/Wah.h"
 #include "dsp/PitchShift.h"
 #include "PortablePaths.h"
+#include "InputSelect.h"
 #include "MidiRouter.h"
 #include "PresetManager.h"
 #include "Tuner.h"
@@ -99,6 +100,10 @@ public:
     // Tempo for synced effects: the host's in a DAW, otherwise the studio/drums tempo.
     double getCurrentBpm() const;
     float takeOutputPeak() { return outputPeak.exchange (0.0f); }
+
+    // Which interface input is the guitar (see InputSelect); saved with the session, not with presets.
+    void setInputSource (int choice) { inputSource.store (juce::jlimit (poman::InputSelect::sumOfFirstTwo, poman::InputSelect::maxInputs - 1, choice)); }
+    int getInputSource() const { return inputSource.load(); }
 
     // While the tuner is open the output is muted, like a tuner pedal.
     void setTunerActive (bool active) { tunerActive.store (active); }
@@ -193,6 +198,7 @@ private:
     std::atomic<bool> tunerActive { false };
     std::atomic<float> inputPeak { 0.0f }, outputPeak { 0.0f }, rawInputPeak { 0.0f };
     std::atomic<double> hostBpm { 0.0 };
+    std::atomic<int> inputSource { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PomanProcessor)
 };

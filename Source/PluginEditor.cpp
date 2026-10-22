@@ -408,6 +408,16 @@ PomanEditor::PomanEditor (PomanProcessor& p)
         jamPageButton.onClick = [this] { showPage (Page::jam); };
     }
 
+    inputSourceBox.setTooltip ("Guitar input: the interface input the guitar is plugged into (the other inputs are ignored)");
+    inputSourceBox.setColour (juce::ComboBox::outlineColourId, palette::text.withAlpha (0.4f));
+    inputSourceBox.onChange = [this]
+    {
+        if (const int id = inputSourceBox.getSelectedId(); id > 0)
+            processor.setInputSource (id == 100 ? poman::InputSelect::sumOfFirstTwo : id - 1);
+    };
+    addAndMakeVisible (inputSourceBox);
+    refreshInputSourceBox();
+
     languageButton.setTooltip ("Language / Idioma");
     languageButton.onClick = [this]
     {
@@ -472,6 +482,24 @@ void PomanEditor::showSavePresetDialog()
         }
         saveDialog = nullptr;
     }), false);
+}
+
+void PomanEditor::refreshInputSourceBox()
+{
+    const int channels = juce::jmax (1, processor.getTotalNumInputChannels());
+    if (channels != shownInputChannels)
+    {
+        shownInputChannels = channels;
+        inputSourceBox.clear (juce::dontSendNotification);
+        for (int ch = 0; ch < channels; ++ch)
+            inputSourceBox.addItem (poman::InputSelect::name (ch), ch + 1);
+        if (channels >= 2)
+            inputSourceBox.addItem (poman::InputSelect::name (poman::InputSelect::sumOfFirstTwo), 100);
+    }
+    const int choice = processor.getInputSource();
+    const int id = choice == poman::InputSelect::sumOfFirstTwo ? (channels >= 2 ? 100 : 1) : (choice < channels ? choice + 1 : 1);
+    if (inputSourceBox.getSelectedId() != id)
+        inputSourceBox.setSelectedId (id, juce::dontSendNotification);
 }
 
 void PomanEditor::applyLanguage()
@@ -600,6 +628,7 @@ void PomanEditor::timerCallback()
     refreshHarmonizerInfo();
     refreshModLabels();
     refreshFileLabels();
+    refreshInputSourceBox(); // the device (and its inputs) can change while the window is open
     poman::i18n::retranslate (*this); // texts the code just set (in English) follow the language
 
     const double now = juce::Time::getMillisecondCounterHiRes() * 0.001;
@@ -1107,7 +1136,8 @@ void PomanEditor::resized()
     auto header = area.removeFromTop (sc (64));
     area.removeFromBottom (sc (14));
 
-    auto io = header.removeFromRight (sc (244)).reduced (0, sc (6));
+    auto io = header.removeFromRight (sc (318)).reduced (0, sc (6));
+    inputSourceBox.setBounds (io.removeFromLeft (sc (74)).withSizeKeepingCentre (sc (70), sc (26)));
     calButton.setBounds (io.removeFromLeft (sc (44)).withSizeKeepingCentre (sc (40), sc (26)));
     for (auto [k, meter] : { std::pair { inputKnob, &inputMeter }, std::pair { outputKnob, &outputMeter } })
     {

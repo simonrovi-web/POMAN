@@ -198,6 +198,11 @@ private:
     TunerDisplay tunerDisplay;
     poman::TunerReading lastTunerReading; // shared with the LIVE page (one consumer of the tuner FIFO)
 
+    // The guitar's interface input; the list follows the device's channel count.
+    juce::ComboBox inputSourceBox;
+    int shownInputChannels = -1;
+    void refreshInputSourceBox();
+
     // EN / ES: switches the interface language (saved for next time).
     juce::TextButton languageButton;
     void applyLanguage();
